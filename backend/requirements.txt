@@ -1,0 +1,3 @@
+# M1.3 will select and verify exact versions in the project environment.
+fastapi
+uvicorn

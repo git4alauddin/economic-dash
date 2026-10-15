@@ -1,0 +1,43 @@
+# Local planning copies and IDE settings
+/doc/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Secrets; commit only reviewed, non-secret templates
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and generated output
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Python environments, caches and generated output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local database files, logs and test reports
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.log
+coverage/
+.coverage
+.coverage.*
+htmlcov/
