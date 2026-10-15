@@ -16,7 +16,7 @@
     "missing": "Blocked requirements return null/unavailable with their reason_code. No sample values, synthetic substitutions, guessed dates or automatic source switching.",
     "release_discovery": "Concrete release URLs below are verified starting points, not permanent latest URLs. Discover newer releases from official indexes; validate title, period and revision before replacing a source URL.",
     "history": "M3.5 uses the reviewed bounded history_releases below. Five-period chart windows keep explicit gaps; older CPI revisions retain their trace. India GDP has two comparable FY points; April expenditure fails component reconciliation. Additional/latest release discovery and durable retention remain downstream work.",
-    "freshness": "M3.6 defines source-specific polling in refresh_policy.py; polling is not a freshness guarantee. M3.7 owns stale thresholds; preserve observation precision, publication time and separate retrieval/check times.",
+    "freshness": "M3.6 polling and M3.7 freshness are separate policies. freshness.py defines conservative observation deadlines and check grace; these are application stale cutoffs, not promised official dates. snapshot_cache.py retains accepted observations/validators in bounded process memory; M4 must add durable transactions. Preserve publication/retrieval/check timestamps and explicit failure reasons.",
     "release_gate": "Recheck terms and hosted access before enabling a route. No publisher has been contacted and no subscription or permission has been obtained."
   },
   "reuse": {

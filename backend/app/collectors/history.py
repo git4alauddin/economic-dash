@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from fractions import Fraction
 import json
@@ -125,10 +125,20 @@ class HistorySnapshot(ImmutableModel):
 
 
 @dataclass(frozen=True)
+class ResourceCheck:
+    resource_id: str
+    batch: NormalizedBatch
+    receipts: tuple[FetchResult, ...]
+    checked_at: datetime
+    not_modified: bool = False
+
+
+@dataclass(frozen=True)
 class HistoryCollection:
     snapshot: HistorySnapshot
     batches: tuple[NormalizedBatch, ...]
     receipts: tuple[FetchResult, ...]
+    checks: tuple[ResourceCheck, ...] = ()
 
 
 def _catalog():

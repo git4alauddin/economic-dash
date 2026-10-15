@@ -21,7 +21,7 @@ def main() -> int:
     settings = get_scheduler_settings(get_settings().app_env)
     result = asyncio.run(CollectionRunner(settings).run(sources, trigger="manual", history=arguments.history))
     print(result.as_json())
-    return 0 if result.status == "prepared" else (2 if result.status == "skipped_busy" else 1)
+    return 0 if result.status in {"prepared", "unchanged"} else (2 if result.status == "skipped_busy" else 1)
 
 
 if __name__ == "__main__":

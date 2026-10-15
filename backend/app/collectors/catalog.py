@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 from .errors import AcquisitionError, ErrorCode
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "data" / "source-catalog.json"
+MAX_DISCOVERED_RELEASES = 6  # Two accepted releases plus up to four index candidates.
 
 
 def validate_url(url: str) -> str:
@@ -98,7 +99,7 @@ class SourceRegistry:
         if source_id not in self.source_ids or profile.get("delivery_publisher_id") != "pib" or parsed.hostname != "www.pib.gov.in" or parsed.path != "/PressReleasePage.aspx" or set(query) != {"PRID"} or len(query["PRID"]) != 1 or not re.fullmatch(r"\d{6,8}", query["PRID"][0], re.ASCII):
             raise ValueError("Discovery may only add a PIB release to an already selected PIB source.")
         key = f"{source_id}.release.{query['PRID'][0]}"
-        if len([k for k in self.resources if k.startswith(f"{source_id}.release.")]) >= 4 and key not in self.resources:
+        if len([k for k in self.resources if k.startswith(f"{source_id}.release.")]) >= MAX_DISCOVERED_RELEASES and key not in self.resources:
             raise ValueError("Discovered release limit exceeded.")
         resources = dict(self.resources)
         resources[key] = SourceResource(key, url, "html")

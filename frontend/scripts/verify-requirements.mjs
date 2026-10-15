@@ -219,7 +219,7 @@ function verifySources(series) {
   }
   same(catalog.source_gate.selected_source_ids, [...selected], "Source gate and decisions disagree");
   console.log(`PASS source decisions: ${expected.length - blocked} selected/derived, ${blocked} explicitly unavailable; ${selected.size} selected routes`);
-  console.log("Bounded history and release discovery metadata verified; freshness, hosted access and blocked-source clearance remain open.");
+  console.log("Source metadata verified; durable storage, hosted access and blocked-source clearance remain open.");
 }
 
 async function probeSources() {

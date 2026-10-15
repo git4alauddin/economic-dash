@@ -96,8 +96,8 @@ class CollectorHttpClient:
     def acknowledge(self, result: FetchResult) -> bool:
         """Commit validators ONLY after the caller validates and accepts/stores data.
 
-        Failed parsing/storage must not call this. M3.7/M4 own durable last-good data;
-        this process-local cache stores only validators, never unvalidated bodies.
+        Failed parsing/storage must not call this. M3.7 accepts memory snapshots;
+        M4 supplies durable transactions. This client stores only validators.
         An older in-flight result cannot replace validators for a newer response.
         """
         resource = self.registry.resolve(result.source_id)
@@ -107,6 +107,17 @@ class CollectorHttpClient:
         ):
             return False
         self._accepted[result.source_id] = (result.etag, result.last_modified)
+        return True
+
+    def seed_validators(self, receipt: FetchResult) -> bool:
+        """Restore body-free receipts ONLY from the accepted snapshot repository."""
+        resource = self.registry.resolve(receipt.source_id)
+        if receipt.resource_url != resource.url or receipt.outcome != "modified" or self._generation[receipt.source_id] != 0 or receipt.source_id in self._accepted:
+            return False
+        for value in (receipt.etag, receipt.last_modified):
+            if value is not None and (len(value) > 4096 or any(ord(c) < 32 or ord(c) > 126 for c in value)):
+                return False
+        self._accepted[receipt.source_id] = (receipt.etag, receipt.last_modified)
         return True
 
     async def fetch(self, source_id: str, *, conditional: bool = True) -> FetchResult:
