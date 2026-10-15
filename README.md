@@ -6,7 +6,7 @@ dashboard assignment.
 ## Current status
 
 The M1.2 repository skeleton includes frontend and backend entrypoints, startup
-scripts, editor settings and documentation boundaries. The frontend is a
+scripts, editor settings and this project README. The frontend is a
 placeholder; dashboard panels and authentic observations are not implemented.
 
 Dependency installation, runtime selection, lockfiles, environment configuration
@@ -47,8 +47,6 @@ economic-dash/
       main.py          FastAPI application and bootstrap route
     requirements.txt   Initial dependencies; version verification is pending
     run.py             Local development launcher
-  docs/
-    README.md          Module ownership and naming conventions
   .editorconfig
   .gitignore
   README.md
@@ -61,8 +59,25 @@ the installed versions and record reproducible installation commands.
 Planning documents and design exports currently live in the sibling `../doc/`
 folder, outside this Git repository.
 
-The README and relevant project files will document reproducible setup, API
-contracts, data sources, decisions and limitations as they are implemented.
+This README will document reproducible setup, API contracts, data sources,
+decisions and limitations as they are implemented. Private implementation logs
+record progress separately; evaluator-facing instructions belong in this repository.
+
+## Ownership and naming
+
+| Module | Responsibility |
+| --- | --- |
+| M1 | Repository conventions, architecture decisions and shared contracts |
+| M2 | Frontend design system, dashboard panels and controls |
+| M3 | Source register, validation and scheduled collection |
+| M4 | Database schema, SQL, dashboard API and health contract |
+| M5 | Authentication, secrets and CORS |
+| M6 | Integration and quality verification |
+| M7 | Deployment, operational documentation and submission |
+
+- React components use PascalCase filenames; the browser entrypoint is `main.tsx`.
+- Python modules and functions use `snake_case`; the API entrypoint is `app/main.py`.
+- Commit titles follow `m<module>.f<feature>.<snake_case_name>`.
 
 ## Entrypoints and scripts
 
