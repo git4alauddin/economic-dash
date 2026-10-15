@@ -9,18 +9,19 @@ const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   if (!["--url", "--output", "--browser", "--mode"].includes(key) || !process.argv[index + 1]) {
-    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives.");
+    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels.");
   }
   options.set(key, process.argv[index + 1]);
 }
 const mode = options.get("--mode") ?? "dashboard";
-if (!["dashboard", "primitives"].includes(mode)) throw new Error("Unknown verification mode.");
+if (!["dashboard", "primitives", "panels"].includes(mode)) throw new Error("Unknown verification mode.");
 const targetUrl = new URL(options.get("--url") ?? "http://127.0.0.1:5173/");
 if (mode === "primitives" && targetUrl.pathname === "/") targetUrl.pathname = "/__ui-preview";
+if (mode === "panels" && targetUrl.pathname === "/") targetUrl.pathname = "/__panel-preview";
 const url = targetUrl.href;
 const cache = join(frontendRoot, "node_modules/.cache/layout-check");
-const output = resolve(options.get("--output") ?? join(cache, mode === "dashboard" ? "results" : "primitives"));
-const reportName = mode === "dashboard" ? "layout-report.json" : "primitives-report.json";
+const output = resolve(options.get("--output") ?? join(cache, mode === "dashboard" ? "results" : mode));
+const reportName = mode === "dashboard" ? "layout-report.json" : `${mode}-report.json`;
 await mkdir(cache, { recursive: true });
 await mkdir(output, { recursive: true });
 
@@ -142,11 +143,11 @@ try {
     const previousTimeOrigin = await evaluate("performance.timeOrigin");
     const navigation = await command("Page.navigate", { url });
     if (navigation.errorText) throw new Error(navigation.errorText);
-    const readyExpression = mode === "dashboard" ? "document.querySelector('[data-dashboard-root]') && document.querySelector('[data-dashboard-root]').dataset.apiState !== 'loading'" : "document.querySelector('[data-ui-preview]')";
+    const readyExpression = mode !== "primitives" ? "document.querySelector('[data-dashboard-root]') && document.querySelector('[data-dashboard-root]').dataset.apiState !== 'loading'" : "document.querySelector('[data-ui-preview]')";
     await waitFor(() => evaluate(`Boolean(performance.timeOrigin !== ${previousTimeOrigin} && document.readyState === 'complete' && (${readyExpression}))`), "the new page ready state");
     await evaluate("document.fonts.ready.then(() => true)");
     await delay(150);
-    const inspect = mode === "dashboard" ? inspectLayout : inspectPrimitives;
+    const inspect = mode !== "primitives" ? inspectLayout : inspectPrimitives;
     const measurements = await evaluate(`(${inspect.toString()})()`);
     const issues = [];
     if (measurements.viewportWidth !== viewport.width || measurements.viewportHeight !== viewport.height) issues.push("Unexpected CSS viewport");
@@ -181,11 +182,32 @@ try {
       } else if (new Set(measurements.panels.map((panel) => Math.round(panel.x))).size !== 1) {
         issues.push("Narrow layout must have one column");
       }
+      if (mode === "panels") {
+        const panels = await evaluate(`(${inspectPanels.toString()})()`);
+        Object.assign(measurements, panels);
+        if (!panels.fixtureBanner || panels.summaryCount !== 12 || panels.iconCount !== 12 || panels.chartCount !== 6) issues.push("Incomplete labeled panel preview");
+        if (panels.plotKinds.join(",") !== "gdp,debt,trade,gst,inflation,expenditure") issues.push("Missing specialized plot types");
+        if (panels.invalidSvg || panels.clippedSvgText) issues.push("Invalid/clipped panel SVG geometry or text");
+        measurements.interactions = await inspectPanelTooltips(command, evaluate);
+        if (measurements.interactions.some((entry) => !entry.hover || !entry.focus || !entry.escape)) issues.push("Panel tooltip interaction failed");
+        await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
+      }
     }
     const screenshot = await command("Page.captureScreenshot", {
       format: "png", clip: { x: 0, y: 0, width: viewport.width, height: viewport.height, scale: 1 }, captureBeyondViewport: true,
     });
     await writeFile(join(output, `${viewport.name}.png`), Buffer.from(screenshot.data, "base64"));
+    if (mode === "panels" && viewport.name === "narrow") {
+      const height = await evaluate("document.documentElement.scrollHeight");
+      const full = await command("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: viewport.width, height, scale: 1 }, captureBeyondViewport: true });
+      await writeFile(join(output, "narrow-full.png"), Buffer.from(full.data, "base64"));
+    }
+    if (mode === "panels" && viewport.name === "target") {
+      for (const panel of measurements.panels) {
+        const capture = await command("Page.captureScreenshot", { format: "png", clip: { x: panel.x, y: panel.y, width: panel.width, height: panel.height, scale: 1 }, captureBeyondViewport: true });
+        await writeFile(join(output, `${panel.id}.png`), Buffer.from(capture.data, "base64"));
+      }
+    }
     report.viewports.push({ ...viewport, ...measurements, runtimeErrors: [...runtimeErrors], issues });
     console.log(`${issues.length ? "FAIL" : "PASS"} ${viewport.name} ${viewport.width}x${viewport.height}: overflow=${Math.max(0, measurements.documentWidth - measurements.layoutWidth)}px, layoutShift=${measurements.layoutShiftScore}`);
   }
@@ -265,4 +287,45 @@ async function inspectTooltip(command, evaluate) {
   await delay(50);
   const escape = await evaluate("!document.querySelector('[role=tooltip]')");
   return { hover, focusZero, escape };
+}
+
+function inspectPanels() {
+  const charts = [...document.querySelectorAll(".indicator-chart svg")];
+  return {
+    fixtureBanner: document.querySelector("[data-fixture-banner]")?.textContent.includes("Not financial observations"),
+    summaryCount: document.querySelectorAll(".panel-summaries .summary-value").length,
+    iconCount: document.querySelectorAll(".panel-icon").length,
+    chartCount: charts.length,
+    plotKinds: [...document.querySelectorAll("[data-plot-kind]")].map((node) => node.dataset.plotKind),
+    invalidSvg: charts.some((svg) => [...svg.querySelectorAll("*")].some((node) => [...node.attributes].some((attribute) => /NaN|Infinity/.test(attribute.value)))),
+    clippedSvgText: charts.some((svg) => [...svg.querySelectorAll("text")].some((node) => {
+      const box = node.getBBox();
+      return box.x < -1 || box.y < -1 || box.x + box.width > svg.viewBox.baseVal.width + 1 || box.y + box.height > svg.viewBox.baseVal.height + 1;
+    })),
+  };
+}
+
+async function inspectPanelTooltips(command, evaluate) {
+  const checks = [];
+  for (let index = 0; index < 6; index++) {
+    const coordinates = await evaluate(`(() => {
+      const point = document.querySelectorAll('[data-panel-id]')[${index}].querySelector('.chart-point');
+      point.scrollIntoView({ block: 'center' });
+      const bounds = (point.querySelector(':scope > rect, :scope > circle') ?? point).getBoundingClientRect();
+      return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    })()`);
+    await command("Input.dispatchMouseEvent", { type: "mouseMoved", ...coordinates });
+    await delay(40);
+    const hover = await evaluate(`Boolean(document.querySelectorAll('[data-panel-id]')[${index}].querySelector('[role=tooltip]'))`);
+    await command("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
+    await evaluate(`document.querySelectorAll('[data-panel-id]')[${index}].querySelector('.chart-point').focus()`);
+    await delay(40);
+    const focus = await evaluate(`Boolean(document.querySelectorAll('[data-panel-id]')[${index}].querySelector('[role=tooltip]'))`);
+    await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+    await command("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+    await delay(40);
+    const escape = await evaluate("!document.querySelector('[role=tooltip]')");
+    checks.push({ panel: index, hover, focus, escape });
+  }
+  return checks;
 }

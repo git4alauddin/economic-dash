@@ -25,9 +25,14 @@ layout check. Exact Figma properties and interaction states remain unverified.
 
 M2.3 adds shared display/metadata/state components, SVG chart foundations and a
 development-only synthetic preview. The dashboard now uses shared unavailable
-states and source/date footers; the specialized panels remain M2.4 work.
+states and source/date footers.
 
-Six panel-specific charts/summaries, authentic observations, database storage, authentication,
+M2.4 implements the six specialized panels, their summaries, original SVG icon
+substitutes and populated development previews. Production panels show missing
+values until validated data is connected. Exact design/source definitions remain
+open as described below.
+
+Authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
 ## Planned scope
@@ -44,7 +49,7 @@ scheduled collection, full integration QA and deployments remain outstanding.
 
 The working production topology below selects hosting, storage, scheduling and
 update delivery based on provider documentation. Deployment verification remains
-outstanding. Charting is selected during the M2 design audit.
+outstanding. Charting uses the custom SVG foundation documented below.
 
 ## Repository and local materials
 
@@ -56,15 +61,17 @@ economic-dash/
       api.ts           Bootstrap API connection check
       config.ts        Public API URL configuration
       dashboard-panels.ts  Stable panel IDs/titles; no observations
-      components/      DashboardHeader, MarketTicker and reusable PanelShell
+      components/      DashboardLayout, DashboardHeader, MarketTicker, PanelShell
         ui/            Values, comparisons, periods, states and source/as-of footer
         charts/        SVG chart frame, point tooltips and legend
+        panels/        Six specialized panels, plots and original SVG icons
       ui/              Presentation types, exact display formatting, plot geometry
-      preview/         Synthetic development-only component preview
+      preview/         Development-only primitives/panel previews and fixtures
       main.tsx         Browser entrypoint
       tokens.css       Shared provisional visual tokens
       styles.css       Shell, grid, surfaces and responsive layout
       primitives.css   Shared UI/chart styling and developer preview layout
+      panels.css       Specialized panel layouts, marks and responsive icons
     scripts/
       verify-layout.mjs  Isolated Chromium viewport/screenshot checks
       test-ui.mjs        Formatting and component tests using Node/Vite
@@ -746,7 +753,8 @@ page. No ticker animation is introduced at this checkpoint.
   800px single-column breakpoint. Panels have minimum heights, allowing later
   content to expand rather than being hidden behind a fixed-height clip.
 
-The two summary regions remain decorative reservations until M2.4, and each panel has
+At M2.2 the two summary regions were decorative reservations; M2.4 replaces them
+with labeled summary cards. Each panel has
 a truthful unavailable/loading/error message. The ticker uses `NO DATA` with `—`
 quotes; it does not claim a live feed. Bootstrap connectivity is still checked
 through the configured API URL. M2.3 adds the shared source/date footer and state
@@ -844,7 +852,7 @@ npm run verify:primitives
 npm run verify:layout
 ```
 
-The 12 Node/Vite tests verify decimal rounding/precision, missing versus zero,
+The initial 12 Node/Vite tests verify decimal rounding/precision, missing versus zero,
 units, signs, valid/invalid dates, safe source links, period/state semantics,
 finite geometry, path gaps and chart reference/data alternatives. Browser preview
 checks cover 1214 × 2159, 390 × 844 and 320 × 740, including long-label overflow,
@@ -852,14 +860,98 @@ SVG bounds, tooltip hover, focus on the zero-value point and Escape dismissal.
 Use the same browser/output/URL options as the layout check; preview artifacts
 default to `node_modules/.cache/layout-check/primitives/`.
 
-All 12 tests, three preview cases, four dashboard layout/failure cases and the
-production build passed. Production JS was checked for absent synthetic fixture
+At the M2.3 checkpoint, those 12 tests, three preview cases, four dashboard
+layout/failure cases and the production build passed. Production JS was checked for absent synthetic fixture
 markers/values. Private screenshots/reports are recorded in the implementation
-log. Final panel charts, actual API adaptation, source definitions, authentication
+log. M2.4 extends this foundation below; actual API adaptation, source definitions, authentication
 and exact Figma parity remain with their owning tasks.
 
 Test tooling references: [Node test runner](https://nodejs.org/api/test.html) and
 [Vite module loading](https://vite.dev/guide/ssr.html#setting-up-the-dev-server).
+
+## Six specialized indicator panels — M2.4
+
+`components/panels/IndicatorPanels.tsx` exports individually testable `GdpPanel`,
+`DebtPanel`, `TradePanel`, `GstPanel`, `InflationPanel` and `ExpenditurePanel`.
+They share `PanelShell`, summary/metadata/state primitives and `DashboardLayout`;
+each selects its own plot composition, icons, captions and series treatment.
+`ui/panel-models.ts` defines frontend presentation inputs for the later API adapter.
+It does not introduce backend routes or change the M1 API contract.
+
+| Panel | Implemented presentation |
+| --- | --- |
+| GDP | India/World summaries with flag/globe artwork; grouped cyan/orange bars and value labels. |
+| Debt/GDP | Country/comparison summaries; cyan line and area fill, percentage-of-GDP scale and rounded callouts. |
+| Trade | Export/import summaries and original ship/arrow icons; two monetary bar series plus a green balance line, including negative balances. |
+| GST | Collection/average summary slots with receipt/calendar artwork; cyan columns plus yellow comparison line. Final receipt/growth definitions remain U4. |
+| Inflation | Inflation/target summaries; CPI line/area, callouts and a labeled reference line only when supplied. No production target value is assumed. |
+| Expenditure | Total/capital summaries; orange capital and blue revenue stacks, segment labels and separately supplied total annotations. |
+
+Grouped bars use category bands; negative bars use a true zero baseline. Area
+fills split at missing periods. A stack with an unknown segment is not drawn as
+complete, while its supplied values remain in the data alternative. Stack
+addition is used solely for SVG coordinates; exact segment/total labels and
+comparison values come from the input model, never from chart arithmetic.
+Bars and point marks support hover/focus tooltips and Escape dismissal.
+
+`PanelIcon` contains original SVG substitutes for the reference illustrations.
+Circular country/globe symbols and finance/trade artwork occupy the audited
+summary regions; narrow layouts put financial artwork in normal flow to avoid
+covering values. The supplied raster remains a visual reference, not an asset
+pack. Actual Figma fonts, original artwork and exact fidelity are still U1 checks.
+
+### Panel preview and known differences
+
+With Vite running, open **`http://127.0.0.1:5173/__panel-preview`**. A persistent
+synthetic-data notice identifies the entire view; example periods and sources
+are also labeled synthetic. Fixture data stays under `src/preview/`, loaded only
+by a DEV-guarded import. Production uses the real panel components with `—`,
+unknown sources/periods and unavailable history until data is connected.
+
+The illustrative source contains conflicting numbers, labels and units. This
+preview preserves the layout/chart families while making these choices explicit:
+
+- Debt uses synthetic annual periods, not unexplained July/August ticks. Its US
+  summary is an explicitly synthetic comparator, not a verified source decision.
+- Trade uses one monetary scale for imports, exports and balance, with a visible
+  currency/scale caption. Expenditure uses INR-crore levels instead of copying
+  an inconsistent percentage axis.
+- GST's example explicitly shows growth and average growth, with synthetic-only
+  series IDs. Those IDs/definitions do not amend the real indicator catalog;
+  M3/M4 still resolve U4 before actual-data binding.
+- The example inflation reference is **synthetic**, not an assertion of the
+  current RBI target or its validity period. Production leaves it unavailable.
+- Numeric annotations follow supplied sample values; comparison arrows follow
+  their signs. Unverified muted-line/highlight behavior and exact illustrated
+  assets are not presented as Figma-confirmed implementation.
+
+U2–U7 retain the M2/M3/M4 ownership recorded in the audit. M2.6 adapts verified
+definitions/periods to these views; M2.7/M6 confirm final presentation and fidelity.
+
+### Verification
+
+From `frontend/`, with Vite running for browser checks:
+
+```powershell
+npm run test:ui
+npm run verify:panels
+npm run verify:primitives
+npm run verify:layout
+npm run build
+```
+
+All **18 tests** and **10 browser cases** passed: three panel-preview widths,
+three shared-primitives widths and four dashboard/layout/API-failure cases.
+The panel check verifies all six plot families, twelve summaries/icons, SVG/text
+bounds, reference grid geometry, no horizontal overflow and hover/focus/Escape
+for each panel. Target preview row tops remain 158px, 710px and 1262px with 529px
+panels. It saves the full frame, six panel crops and a full narrow-page capture.
+Use the existing browser/URL/output options; default panel evidence is under
+ignored `node_modules/.cache/layout-check/panels/`.
+
+Production build/type-check passed. Fixture routes/modules and distinctive
+synthetic values were checked for exclusion from the production JS. Screenshots,
+reports and remaining limitations are recorded in the private implementation log.
 
 ## Local setup
 

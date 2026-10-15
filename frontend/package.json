@@ -15,6 +15,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "verify:layout": "node scripts/verify-layout.mjs",
     "verify:primitives": "node scripts/verify-layout.mjs --mode primitives",
+    "verify:panels": "node scripts/verify-layout.mjs --mode panels",
     "test:ui": "node --test scripts/test-ui.mjs"
   },
   "dependencies": {

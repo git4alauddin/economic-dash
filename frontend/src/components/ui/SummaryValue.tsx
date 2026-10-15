@@ -8,15 +8,18 @@ interface SummaryValueProps {
   unit: Unit;
   precision: number;
   children?: ReactNode;
+  icon?: ReactNode;
+  iconPlacement?: "inline" | "corner";
 }
 
-export default function SummaryValue({ label, value, unit, precision, children }: SummaryValueProps) {
+export default function SummaryValue({ label, value, unit, precision, children, icon, iconPlacement = "inline" }: SummaryValueProps) {
   const display = formatValue(value, unit, precision);
   return (
     <div className="summary-value" role="group" aria-label={label}>
-      <p className="summary-label">{label}</p>
+      <div className="summary-label-row">{icon && iconPlacement === "inline" && <span className="summary-inline-icon" aria-hidden="true">{icon}</span>}<p className="summary-label">{label}</p></div>
       <strong className="summary-number" aria-label={display === MISSING ? "Value unavailable" : undefined}>{display}</strong>
       {children && <div className="summary-detail">{children}</div>}
+      {icon && iconPlacement === "corner" && <span className="summary-artwork" aria-hidden="true">{icon}</span>}
     </div>
   );
 }

@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { checkApiConnection } from "./api";
-import DashboardHeader from "./components/DashboardHeader";
-import MarketTicker from "./components/MarketTicker";
-import PanelShell from "./components/PanelShell";
-import { dashboardPanels } from "./dashboard-panels";
-import StateMessage from "./components/ui/StateMessage";
-import SourceAsOf from "./components/ui/SourceAsOf";
+import DashboardLayout from "./components/DashboardLayout";
+import { indicatorPanelComponents } from "./components/panels/IndicatorPanels";
 
 export default function App() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -31,34 +27,8 @@ export default function App() {
   }[status];
 
   return (
-    <div className="dashboard-page" data-dashboard-root data-api-state={status}>
-      <a className="skip-link" href="#dashboard-main">Skip to indicators</a>
-      <DashboardHeader />
-      <MarketTicker />
-      <main id="dashboard-main" className="dashboard-main" tabIndex={-1} aria-labelledby="dashboard-title">
-        <p className="sr-only" role={status === "error" ? "alert" : "status"}>{message}</p>
-        <div className="indicator-grid">
-          {dashboardPanels.map((panel) => (
-            <PanelShell key={panel.id} panel={panel}>
-              <div className="shell-placeholder">
-                <div className="shell-summary-row" aria-hidden="true">
-                  {[0, 1].map((slot) => (
-                    <div className="shell-summary" key={slot}>
-                      <span className="shell-summary-label" />
-                      <span className="shell-summary-value" />
-                    </div>
-                  ))}
-                </div>
-                <div className="panel-empty">
-                  <span className="empty-mark" aria-hidden="true">—</span>
-                  <StateMessage state={status === "ready" ? "unavailable" : status} />
-                </div>
-                <SourceAsOf sources={[]} asOf={null} />
-              </div>
-            </PanelShell>
-          ))}
-        </div>
-      </main>
-    </div>
+    <DashboardLayout apiState={status} announcement={message}>
+      {indicatorPanelComponents.map((Panel, index) => <Panel key={index} state={status === "ready" ? "unavailable" : status} />)}
+    </DashboardLayout>
   );
 }

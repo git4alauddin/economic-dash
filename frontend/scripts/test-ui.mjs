@@ -22,6 +22,9 @@ try {
   const StateMessage = await component("ui/StateMessage");
   const PeriodLabel = await component("ui/PeriodLabel");
   const ChartFrame = await component("charts/ChartFrame");
+  const panels = await server.ssrLoadModule("/src/components/panels/IndicatorPanels.tsx");
+  const { panelPoints, default: PanelPlot } = await server.ssrLoadModule("/src/components/panels/PanelPlots.tsx");
+  const { panelFixtures } = await server.ssrLoadModule("/src/preview/panel-fixtures.ts");
   const render = (type, props) => renderToStaticMarkup(createElement(type, props));
 
   await test("decimal display preserves values above Number's safe integer range", () => {
@@ -101,6 +104,59 @@ try {
     assert.ok(render(ChartFrame, { ...props, references: [{ id: "bad", label: "Unknown target", value: null }] }).includes("Reference unavailable: Unknown target"));
     assert.ok(render(ChartFrame, { ...props, points: [...props.points, { id: "outside", index: 1, label: "Outside", value: "500" }] }).includes("outside the scale"));
     assert.ok(render(ChartFrame, { ...props, state: "empty" }).includes("No observations"));
+  });
+  await test("all six panels default to missing observations and unknown provenance", () => {
+    for (const Panel of panels.indicatorPanelComponents) {
+      const html = render(Panel, {});
+      assert.equal((html.match(/Value unavailable/g) ?? []).length, 2);
+      assert.ok(html.includes("Source unavailable") && html.includes("Period unavailable"));
+      assert.ok(!html.includes("data-plot-kind="));
+    }
+  });
+  await test("six specialized fixture plots render their series, summaries and original icons", () => {
+    const kinds = ["gdp", "debt", "trade", "gst", "inflation", "expenditure"];
+    panels.indicatorPanelComponents.forEach((Panel, index) => {
+      const html = render(Panel, { data: panelFixtures[index] });
+      assert.ok(html.includes(`data-plot-kind="${kinds[index]}"`));
+      assert.ok(html.includes("Synthetic examples") && html.includes("Non-NSE"));
+      assert.equal((html.match(/class="panel-icon /g) ?? []).length, 2);
+      assert.ok(!/NaN|Infinity/.test(html));
+    });
+  });
+  await test("banded bars reserve category space and negative/zero bars stay valid", () => {
+    const scale = geometry.createPlotScale(5, [-10, 10], 56, true);
+    assert.ok(scale.x(0) > scale.left && scale.x(4) < geometry.plotBox.right);
+    const negative = geometry.barGeometry(scale, 0, -5, 0, 2);
+    const positive = geometry.barGeometry(scale, 0, 5, 1, 2);
+    const zero = geometry.barGeometry(scale, 1, 0);
+    assert.ok(negative.height > 0 && positive.height > 0 && negative.x < positive.x);
+    assert.equal(negative.y, scale.y(0));
+    assert.equal(zero.height, 1);
+    assert.equal(geometry.barGeometry(scale, 1, Infinity), null);
+  });
+  await test("area fills split at nulls and never fill across a missing period", () => {
+    const scale = geometry.createPlotScale(5, [0, 10]);
+    assert.equal(geometry.buildAreaPaths(["1", "2", null, "3", "4"], scale, 0).length, 2);
+    assert.deepEqual(geometry.buildAreaPaths(["1", null, "2", null, "3"], scale, 0), []);
+  });
+  await test("expenditure stacking affects geometry, not segment or supplied total values", () => {
+    const chart = panelFixtures[5].chart;
+    const points = panelPoints("expenditure", chart);
+    const revenue = points.find((point) => point.id === "expenditure_revenue:0");
+    assert.equal(revenue.value, "210");
+    assert.equal(revenue.baseValue, 60);
+    assert.equal(revenue.plotValue, 270);
+    const missing = { ...chart, series: chart.series.map((series) => series.id === "expenditure_capital" ? { ...series, values: [null, ...series.values.slice(1)] } : series) };
+    assert.ok(panelPoints("expenditure", missing).filter((point) => point.index === 0).every((point) => point.plotValue === null));
+    const changed = { ...chart, series: chart.series.map((series) => series.kind === "total" ? { ...series, values: ["271", ...series.values.slice(1)] } : series) };
+    assert.equal(panelPoints("expenditure", changed).find((point) => point.id === "expenditure_total:0").value, "271");
+  });
+  await test("inflation reference uses the supplied value and malformed histories remain unavailable", () => {
+    const chart = { ...panelFixtures[4].chart, references: [{ id: "test", label: "Synthetic reference", value: "2.25" }] };
+    assert.ok(render(PanelPlot, { kind: "inflation", chart, state: "fresh" }).includes("Synthetic reference: 2.25%"));
+    assert.ok(!render(PanelPlot, { kind: "inflation", chart: null, state: "unavailable" }).includes("chart-reference"));
+    const bad = { ...chart, labels: ["Only one period"] };
+    assert.ok(render(PanelPlot, { kind: "inflation", chart: bad, state: "fresh" }).includes("Data unavailable"));
   });
 } finally {
   await server.close();
