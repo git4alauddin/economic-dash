@@ -69,6 +69,54 @@ def get_settings() -> Settings:
     return Settings()
 
 
+class DatabaseSettings(BaseSettings):
+    """Dedicated private directory; Render must mount /var/data before startup."""
+
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_DIRECTORY / ".env", env_file_encoding="utf-8",
+        env_prefix="DATABASE_", extra="ignore", allow_inf_nan=False,
+    )
+
+    app_env: Literal["development", "test", "production"] = "development"
+    directory: Path | None = None
+    busy_timeout: float = Field(default=5, gt=0, le=30)
+
+    @model_validator(mode="after")
+    def validate_directory(self) -> Self:
+        directory = self.directory
+        if directory is None:
+            directory = (Path("/var/data/economic-dash") if self.app_env == "production"
+                         else BACKEND_DIRECTORY / ".runtime" / "database")
+        directory = directory.expanduser()
+        if not directory.is_absolute():
+            directory = BACKEND_DIRECTORY / directory
+        directory = directory.resolve()
+        frontend = BACKEND_DIRECTORY.parent / "frontend"
+        shared_directories = {
+            Path(directory.anchor), BACKEND_DIRECTORY,
+            BACKEND_DIRECTORY.parent, Path("/var/data").resolve(),
+        }
+        try:
+            shared_directories.add(Path.home())
+        except RuntimeError:
+            pass  # Minimal service/test environments may have no home directory.
+        if directory.is_relative_to(frontend) or directory in shared_directories:
+            raise ValueError("Database requires a dedicated directory outside frontend assets.")
+        if self.app_env == "production" and not directory.is_relative_to(Path("/var/data").resolve()):
+            raise ValueError("Production database must be beneath the /var/data persistent mount.")
+        self.directory = directory
+        return self
+
+    @property
+    def path(self) -> Path:
+        assert self.directory is not None
+        return self.directory / "dashboard.sqlite3"
+
+
+def get_database_settings(app_env: str) -> DatabaseSettings:
+    return DatabaseSettings(app_env=app_env)
+
+
 class CollectorSettings(BaseSettings):
     """Acquisition limits; scheduling and observation freshness are separate."""
 

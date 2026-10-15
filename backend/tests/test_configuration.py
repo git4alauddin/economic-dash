@@ -9,7 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.config import BACKEND_DIRECTORY, SchedulerSettings, Settings
+from app.config import BACKEND_DIRECTORY, DatabaseSettings, SchedulerSettings, Settings
 from app.main import create_app
 
 
@@ -18,6 +18,11 @@ class ConfigurationTests(unittest.TestCase):
         self.environment_patch = patch.dict(os.environ, {}, clear=True)
         self.environment_patch.start()
         self.addCleanup(self.environment_patch.stop)
+        self.database_directory = TemporaryDirectory()
+        self.addCleanup(self.database_directory.cleanup)
+        self.database_settings = DatabaseSettings(
+            _env_file=None, app_env="test", directory=Path(self.database_directory.name) / "db",
+        )
 
     def test_example_environment_loads(self) -> None:
         settings = Settings(_env_file=BACKEND_DIRECTORY / ".env.example")
@@ -56,14 +61,15 @@ class ConfigurationTests(unittest.TestCase):
         settings = Settings(
             _env_file=None, app_env="production", cors_allowed_origins=[origin],
         )
-        with TestClient(create_app(settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
+        # CORS-only test; production mount/fail-closed behavior is tested separately.
+        with patch("app.main.Database.bootstrap"), TestClient(create_app(settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
             allowed = client.get("/", headers={"Origin": origin})
             denied = client.get("/", headers={"Origin": "http://localhost:5173"})
         self.assertEqual(allowed.headers["access-control-allow-origin"], origin)
         self.assertNotIn("access-control-allow-origin", denied.headers)
 
     def test_development_cors_preflight_and_bootstrap(self) -> None:
-        with TestClient(create_app(Settings(_env_file=None), scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
+        with TestClient(create_app(Settings(_env_file=None), scheduler_settings=SchedulerSettings(_env_file=None, enabled=False), database_settings=self.database_settings)) as client:
             response = client.get("/")
             allowed = client.options("/", headers={
                 "Origin": "http://127.0.0.1:5173",

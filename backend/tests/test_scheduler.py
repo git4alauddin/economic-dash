@@ -24,7 +24,7 @@ from app.collectors.process_lock import ProcessLock
 from app.collectors.refresh_policy import IST, POLICIES, selected_policies
 from app.collectors.runner import CollectionRunner, collect_sources
 from app.collectors.scheduler import CollectorScheduler
-from app.config import CollectorSettings, SchedulerSettings, Settings
+from app.config import CollectorSettings, DatabaseSettings, SchedulerSettings, Settings
 from app.main import create_app
 from test_normalization import NOW, trade
 
@@ -341,7 +341,8 @@ class SchedulerTests(AsyncTests):
             finally:
                 closed.set()
         runner = CollectionRunner(self.settings, client_factory=FakeClient, collect=collect)
-        application = create_app(Settings(_env_file=None), scheduler_settings=self.settings, runner=runner)
+        application = create_app(Settings(_env_file=None), scheduler_settings=self.settings, runner=runner,
+                                 database_settings=DatabaseSettings(_env_file=None, directory=self.settings.state_directory / "db"))
         async with application.router.lifespan_context(application):
             await asyncio.wait_for(entered.wait(), 1)
             self.assertEqual(application.state.collector_scheduler.status, "running")
@@ -352,7 +353,8 @@ class SchedulerTests(AsyncTests):
         def forbidden():
             self.fail("Disabled scheduler must not create a client")
         settings = SchedulerSettings(_env_file=None, enabled=False, state_directory=self.settings.state_directory)
-        application = create_app(Settings(_env_file=None), scheduler_settings=settings, runner=CollectionRunner(settings, client_factory=forbidden))
+        application = create_app(Settings(_env_file=None), scheduler_settings=settings, runner=CollectionRunner(settings, client_factory=forbidden),
+                                 database_settings=DatabaseSettings(_env_file=None, directory=self.settings.state_directory / "db"))
         async with application.router.lifespan_context(application):
             self.assertEqual(application.state.collector_scheduler.status, "disabled")
             self.assertIsNone(application.state.collector_scheduler._task)
