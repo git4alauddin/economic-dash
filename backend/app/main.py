@@ -10,6 +10,7 @@ from app.config import (DatabaseSettings, SchedulerSettings, Settings,
                         get_database_settings, get_scheduler_settings, get_settings)
 from app.database import Database
 from app.repository import SQLiteCollectionRepository
+from app.queries import DashboardQueries
 from app.collectors.runner import CollectionRunner, configure_logging
 from app.collectors.scheduler import CollectorScheduler
 
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
             configure_logging()
         repository = SQLiteCollectionRepository(database)
         application.state.collection_repository = repository
+        application.state.dashboard_queries = DashboardQueries(database)
         collection_runner = runner if runner is not None else CollectionRunner(scheduler_settings, repository=repository)
         scheduler = CollectorScheduler(collection_runner, scheduler_settings)
         application.state.collection_runner = collection_runner
