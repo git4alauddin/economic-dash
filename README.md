@@ -19,6 +19,9 @@ is frozen for implementation; overall M1 acceptance remains conditional on the
 open design/source gates. Hosting decisions have feasibility evidence, with live
 verification assigned to M7.
 
+M2.1 adds a provisional PNG-derived UI audit below. Exact Figma properties and
+interaction states remain unverified; dashboard implementation has not started.
+
 Dashboard panels, authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
@@ -606,6 +609,104 @@ private log together. Additive optional fields can remain in v1. Breaking change
 require an explicit coordinated contract revision or a new API version. An
 unresolved conflict pauses only its dependent work; unaffected tasks may proceed.
 Internal filenames/classes remain each module's choice within the directory map.
+
+## UI specification — M2.1 provisional PNG audit
+
+The supplied `Economic Indicator 1.png` was inspected at its original **4992 ×
+8772** raster size. The user authorized this reference for implementation planning.
+The [Figma frame](https://www.figma.com/design/brsbeMh0t7dB6ibf3cJN4D/Economic-Indicator-Assignment?node-id=1-2)
+could not be opened through the available web tool in this audit; no callable
+Figma integration was available. Frame-specific dimensions, layers, font names,
+assets and interactive states are therefore not verified. This completes the
+provisional raster specification; M2.1's exact-Figma acceptance gate remains open.
+
+### Screen inventory and component map
+
+`DashboardPage` contains `DashboardHeader`, `MarketTicker` and a two-column,
+three-row `IndicatorGrid`. Each specialized panel uses a shared `PanelShell`,
+two `SummaryCard` regions, its own chart, legends where shown, and a required
+`SourceAsOf`/availability region. These are proposed component names, not files
+already created. Common axis, annotation, value/change, state and icon primitives
+belong to M2.3; chart-library/CSS/font decisions remain M2.2/M2.3 work.
+
+The header reads **ECONOMIC INDICATOR**, with red/blue candlestick decoration on
+a dark background. The full-width navy ticker has a red `LIVE` badge, separators,
+instrument/value/change groups and a repeated/clipped sequence. Visible instrument
+labels include `SENSEX`, `NIFTY BANK` and `NIFTY IT`; M3 must verify their identities,
+providers and timestamps. The PNG does not establish a complete instrument list,
+animation behavior or tick-level refresh. No navigation, sign-in form, tabs or
+period-selector buttons are visible in this export; M5 supplies sign-in separately.
+
+| Position / API indicator | Visible heading and summary labels | Chart and annotations visible in the PNG |
+| --- | --- | --- |
+| Top left / `gdp_growth` | `GDP Growth - India vs World (YOY%)`; `India`, `World` | Grouped vertical bars; cyan India/orange World legend; value labels above bars; years 2021–2025; 0–10% axis in 2-point steps. |
+| Top right / `debt_to_gdp` | `Debt to GDP Ratio (IND)`; `India (FY25)`, `Ind vs US` | Cyan line with area fill and rounded value callouts; 50–100% axis in 10-point steps; ticks `25 Jul`, `1 Aug`, `8 Aug`, `15 Aug`, `22 Aug`. Comparison and dates require U2 below. |
+| Middle left / `trade` | `Imports, Exports & Trade Balance`; `Exports`, `Imports` | Cyan Imports/orange Exports grouped bars plus green Trade Balance line/markers; bar labels and line callouts; 2021–2025, percentage axis as illustrated, subject to U3. |
+| Middle right / `gst_collection` | `GST Tax Collection (YOY%)`; `GST Collections`, `Monthly Average` | Cyan columns and yellow line/markers; bar labels and line callouts; 2021–2025, percentage axis. Legend literally says `Imports` and `Trade Balance`; resolve U4. |
+| Bottom left / `inflation_india` | `Inflation (IND)`; `Inflation Rate`, `RBI Target` | Line/area plot with brighter middle and muted outer segments, a value callout and a thin low horizontal cyan rule; 2021–2025 and percentage ticks. Target-line interpretation remains U5. |
+| Bottom right / `government_expenditure` | `Government Expenditure`; `Total Expenditure`, `Capital Expenditure` | Stacked columns; orange Capital Expenditure below blue Revenue Expenditure; segment and total labels; 2021–2025, percentage axis subject to U6. |
+
+All twelve summaries have a prominent value and a comparison strip; flags/globe
+appear in the top row and illustrated finance/trade icons in the other rows.
+Panels have dark gradients, thin borders, rounded corners, a reflective upper-left
+detail and a separated heading band. Charts use fine gray grids and light labels.
+The export has a large dark decorative area below the six panels and no visible
+source/as-of footer. The assignment still requires source/date/non-NSE/status
+information; M2.2–M2.6 must allocate it without clipping the chart or inventing dates.
+
+### Measurement sheet
+
+Measurements below are **approximate raster-derived CSS sizes at 1214px width**,
+not extracted Figma properties. Uniform scale is `1214 / 4992`; the image then
+occupies about **2133.25px** in height, leaving **25.75px** within the 2159px
+evaluation viewport. Do not stretch the raster vertically to conceal this mismatch.
+
+| Region/property | Initial measurement for M2.2 |
+| --- | --- |
+| Header / ticker bands | Approximately 84px / 47px high; ticker spans the viewport. |
+| Grid | Left inset about 29px; right inset about 28px; columns about 566–567px with a 23px gap. |
+| Panel rows | Tops near 158px, 710px and 1263px; height about 529px; vertical gap about 23px; last panel ends near 1792px. |
+| Panel heading / summary cards | Heading band about 66px; each summary about 247 × 109px; individual plot bounds saved in private audit evidence. |
+| Corners / icons | Estimated panel radius 16px and summary radius 12px; flag/globe diameter around 44px, illustrated icons roughly 72–88px. Exact vector/asset bounds unknown. |
+| Typography | Estimated title 36px, panel heading 20px, summary label 18px, primary value 34px, chart ticks 14–16px. Family, weights, line heights and metrics remain unknown. |
+| Sampled surfaces | Page `#0A0A0A`; ticker `#05102A`; heading `#1E1F27`; body sample `#060A1D`; summary sample `#0B283B`; grid sample `#5B5B5B`. |
+| Sampled accents | White `#FFFFFF`, cyan `#0FCBFF`, positive `#45FF5B`, ticker positive `#69F6B8`, red `#D62D2A`, yellow `#F4E15C`, green `#22D700`, orange `#E99E10`. Gradients are not single flat tokens. |
+
+The private M2 evidence contains the source hash, source-pixel panel/plot bounds,
+palette samples and a **1214 × 2159 annotated PNG layout guide**. Green outlines
+mark panels and magenta outlines estimated plot regions. The guide is a scaled
+reference with annotations, not a browser capture or a visual-fidelity test result.
+
+### Visible controls and proposed behavior
+
+| Surface | Observed evidence / implementation rule |
+| --- | --- |
+| `LIVE` badge | Status-like appearance only; no click/toggle behavior established. M2/M3 must label actual freshness and cadence honestly. |
+| Ticker overflow/repetition | Movement cannot be inferred from one PNG. M2.5 records its motion choice and accessible reduced-motion behavior; every item remains readable. |
+| Legends | Colored keys/text are visible; no selected/disabled state is shown. Initially presentational; add series toggling only with an explicitly documented decision. |
+| Chart callouts | Static rounded labels are visible; hover/focus behavior is unknown. M2.3/M2.5 may add accessible point inspection, recording it as an implementation choice. |
+| Years, day/month ticks and `FY25` | These are labels in the export, not demonstrated selectors. M2/M3 use verified catalog periods and record any actual control requirement. |
+| Summary icons / header | No action is evidenced. Treat as decorative/informational unless Figma clarifies behavior. |
+
+### Uncertainties and data handoff
+
+| ID | Unresolved detail | Owner and required resolution |
+| --- | --- | --- |
+| U1 | Exact font, spacing, gradients, texture, icons, asset rights and interaction states | M2: obtain properties/assets where available; otherwise record a provisional substitute before implementation. Confirm Figma disagreements before claiming parity. |
+| U2 | Debt's `Ind vs US` summary, FY label and day/month trend conflict with an annual debt ratio interpretation | M2/M3: verify comparator, denominator, period and chart meaning; M4 exposes only the approved definition/catalog. |
+| U3 | Trade summaries use a dollar/B display while chart ticks use percentages | M3/M4: establish monetary level versus growth series, currency, coverage and period; M2 labels each axis with that verified unit. |
+| U4 | GST legend names trade metrics and its monthly average lacks a unit | M2/M3: confirm intended series/legend and receipt/growth/average definitions; no trade labels silently mapped to GST data. |
+| U5 | RBI target summary and the low horizontal rule do not establish one coherent target scale | M2/M3: verify policy value/validity and whether that rule is a target; label the actual reference accurately. |
+| U6 | Expenditure percentage summaries/axis and stacked labels do not establish amounts, shares or growth; shown totals are not reliable arithmetic | M3/M4: verify budget coverage, actual/estimate status, units and revenue/capital/total relationship before binding data. |
+| U7 | Repeated annotations, example years, green upward arrows alongside negative changes and line/bar heights are not reliable observations | M2/M3/M4: calculate display values, sign/direction, labels and geometry from validated observations. Record any visual deviation needed for truthful semantics. |
+| U8 | Source/date/state UI is absent from the PNG | M2/M4: add compact truthful metadata/state treatment and test it at the target viewport; M6 verifies visibility and overflow. |
+
+No illustrated economic value is a source-backed observation. Keep any later
+fixture previews explicitly labeled and outside the production data path. Existing
+M1.5 IDs/contracts remain unchanged; unresolved comparisons/series additions require
+an approved catalog definition. A missing definition/value remains unavailable/`—`.
+M2.2 can start the provisional structural shell from this specification; final
+visual acceptance waits for the design audit's open items and M2/M6 comparison.
 
 ## Local setup
 
