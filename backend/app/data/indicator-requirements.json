@@ -3,10 +3,11 @@
   "status": "requirements_only",
   "source_gate": {
     "stage": "M3.2",
-    "nse_assessment": "pending_for_every_requirement",
+    "nse_assessment": "recorded_in_source_catalog",
     "selection": "Use NSE wherever it publishes the required observation; investigate the named authoritative alternatives otherwise.",
-    "candidate_urls": "Research entry points only; retrieval paths, coverage, permissions and publication cadence are unverified.",
-    "selected_source_ids": []
+    "candidate_urls": "Research leads only; resolved definitions, verified routes and remaining gates are in source-catalog.json.",
+    "catalog": "source-catalog.json",
+    "selected_source_ids": ["mospi_gdp_pib", "world_bank_gdp", "commerce_trade_pib", "mospi_cpi_pib", "finance_accounts_pib"]
   },
   "publishers": {
     "nse": { "name": "National Stock Exchange of India", "url": "https://www.nseindia.com/", "is_nse": true },
@@ -18,6 +19,9 @@
     "commerce": { "name": "Ministry of Commerce and Industry / DGCI&S", "url": "https://tradestat.commerce.gov.in/", "is_nse": false },
     "gst_council": { "name": "GST Council", "url": "https://gstcouncil.gov.in/all-gst-revenue", "is_nse": false },
     "cga": { "name": "Controller General of Accounts", "url": "https://cga.nic.in/Page/Monthly-Accounts-Review.aspx", "is_nse": false },
+    "pib": { "name": "Press Information Bureau", "url": "https://www.pib.gov.in/", "is_nse": false },
+    "gstn": { "name": "Goods and Services Tax Network / GST Portal", "url": "https://www.gst.gov.in/", "is_nse": false },
+    "dea": { "name": "Department of Economic Affairs / Gazette of India", "url": "https://egazette.gov.in/", "is_nse": false },
     "union_budget": { "name": "Union Budget / Ministry of Finance", "url": "https://www.indiabudget.gov.in/", "is_nse": false }
   },
   "common_requirements": {

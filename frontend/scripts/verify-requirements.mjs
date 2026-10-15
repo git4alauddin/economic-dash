@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
-// Cross-check the backend inventory against the actual UI bindings.
-// No upstream requests, payloads, screenshots or report files.
+// Cross-check the backend inventory and source choices against actual UI bindings.
+// --online probes selected, permitted routes in memory; never writes reports/payloads.
 const root = fileURLToPath(new URL("../", import.meta.url));
 const read = async (relative) => readFile(new URL(relative, import.meta.url), "utf8");
 const catalog = JSON.parse(await read("../../backend/app/data/indicator-requirements.json"));
+assert.ok(process.argv.slice(2).every((arg) => arg === "--online"), "Use --online or no arguments.");
+const sources = JSON.parse(await read("../../backend/app/data/source-catalog.json"));
 function same(actual, expected, label) {
   assert.equal(new Set(actual).size, actual.length, `${label}: duplicate entries`);
   assert.deepEqual([...actual].sort(), [...expected].sort(), label);
@@ -30,8 +32,8 @@ function text(value, label) { assert.ok(typeof value === "string" && value.trim(
 assert.equal(catalog.schema_version, 1);
 assert.equal(catalog.status, "requirements_only");
 assert.equal(catalog.source_gate.stage, "M3.2");
-assert.equal(catalog.source_gate.nse_assessment, "pending_for_every_requirement");
-assert.deepEqual(catalog.source_gate.selected_source_ids, [], "M3.1 must not approve source candidates");
+assert.equal(catalog.source_gate.nse_assessment, "recorded_in_source_catalog");
+assert.equal(catalog.source_gate.catalog, "source-catalog.json");
 for (const [id, source] of Object.entries(catalog.publishers)) {
   text(source.name, `${id} publisher`);
   const url = new URL(source.url);
@@ -113,7 +115,150 @@ try {
   for (const key of ["comparison_requirement", "history_requirement", "timing_requirement", "cadence_requirement"]) text(catalog.ticker[key], `ticker: ${key}`);
   console.log(`PASS requirements: ${catalog.panels.length} panels, ${series.size} series, ${summaryCount} summary slots (${unbound.length} unresolved), ${catalog.ticker.instruments.length} ticker instruments`);
   console.log("PASS UI units/roles, ticker metadata coverage, candidate attribution, period requirements and transform dependencies");
-  console.log("Source verification and definition selection remain pending M3.2; no data was fetched or approved.");
+  verifySources(series);
+  if (process.argv.includes("--online")) await probeSources();
 } finally {
   await server.close();
+}
+
+function publicUrl(value) {
+  const url = new URL(value);
+  assert.equal(url.protocol, "https:");
+  assert.ok(!url.username && !url.password, "Credentials in source URL");
+}
+
+function verifySources(series) {
+  assert.equal(sources.schema_version, 1);
+  assert.equal(sources.stage, "M3.2");
+  assert.equal(sources.status, "assessed_with_blockers");
+  assert.equal(sources.collection_implemented, false, "M3.2 does not implement collection");
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(sources.checked_on));
+  for (const reuse of Object.values(sources.reuse)) {
+    publicUrl(reuse.url);
+    text(reuse.status, "Reuse status");
+    text(reuse.constraint, "Reuse conditions");
+    assert.equal(typeof reuse.collection_allowed, "boolean");
+  }
+  for (const [id, source] of Object.entries(sources.sources)) {
+    publicUrl(source.url);
+    for (const field of ["discovery_url", "metadata_url", "corroborating_url"]) if (source[field]) publicUrl(source[field]);
+    assert.ok(catalog.publishers[source.publisher_id], `${id}: publisher missing`);
+    if (source.delivery_publisher_id) assert.ok(catalog.publishers[source.delivery_publisher_id], `${id}: delivery publisher missing`);
+    assert.ok(sources.reuse[source.reuse_id], `${id}: reuse policy missing`);
+    assert.ok(["json", "html", "pdf"].includes(source.format), `${id}: format`);
+    assert.ok(["verified_local", "verified_web", "blocked_tls", "page_only"].includes(source.access), `${id}: access status`);
+    text(source.limits, `${id}: limitations`);
+  }
+  const expected = [...series.keys(), ...catalog.ticker.instruments.map((item) => item.instrument_id), ...catalog.unbound_requirements.map((item) => item.id)];
+  same(Object.keys(sources.requirements), expected, "Every series, quote and unbound statistic needs a source decision");
+  for (const [id, decision] of Object.entries(sources.nse_assessments)) {
+    assert.ok(decision.source_ids.length, `${id}: NSE assessment missing`);
+    for (const sourceId of decision.source_ids) assert.equal(sources.sources[sourceId]?.publisher_id, "nse", `${id}: non-NSE assessment source`);
+    assert.ok(!/pending|absent/.test(decision.result), `${id}: assessment cannot assume NSE absence`);
+    text(decision.locator, `${id}: NSE location`);
+    text(decision.selection_reason, `${id}: source decision reason`);
+  }
+  const selected = new Set();
+  let blocked = 0;
+  for (const [id, item] of Object.entries(sources.requirements)) {
+    const source = sources.sources[item.source_id];
+    assert.ok(source, `${id}: unknown source`);
+    assert.ok(sources.nse_assessments[item.nse_assessment_id], `${id}: NSE-first assessment missing`);
+    const requirement = series.get(id) ?? (catalog.ticker.instruments.some((quote) => quote.instrument_id === id) ? catalog.ticker : null);
+    if (requirement) {
+      assert.equal(item.unit, requirement.unit, `${id}: resolved unit differs from UI`);
+      assert.ok(requirement.frequency_candidates.includes(item.frequency), `${id}: frequency outside requirements`);
+      if (item.basis !== null) assert.ok(requirement.period_basis_candidates.includes(item.basis), `${id}: period basis outside requirements`);
+      text(item.definition_id, `${id}: definition ID`);
+    }
+    text(item.definition, `${id}: definition`);
+    for (const auxiliary of item.auxiliary_source_ids ?? []) assert.ok(sources.sources[auxiliary], `${id}: unknown auxiliary source`);
+    assert.ok(["selected", "derived", "blocked"].includes(item.status), `${id}: unknown decision state`);
+    if (item.status === "blocked") {
+      blocked++;
+      text(item.reason_code, `${id}: unavailable reason`);
+      text(item.unblock, `${id}: unblock condition`);
+    } else {
+      assert.ok(item.basis, `${id}: unresolved period basis cannot be selected`);
+      assert.equal(source.access, "verified_local", `${id}: selected source was not reached locally`);
+      assert.equal(sources.reuse[source.reuse_id].collection_allowed, true, `${id}: reuse gate is unresolved`);
+      selected.add(item.source_id);
+      if (item.status === "selected") {
+        text(item.comparison, `${id}: comparison semantics`);
+        text(item.history, `${id}: history coverage`);
+      }
+    }
+    if (item.inputs) {
+      text(item.transform_id, `${id}: transform ID`);
+      text(item.gate, `${id}: transform validation gate`);
+      for (const input of item.inputs) {
+        const parent = sources.requirements[input];
+        assert.ok(parent && input !== id, `${id}: invalid transform input ${input}`);
+        for (const field of ["unit", "frequency", "basis"]) assert.equal(item[field], parent[field], `${id}: mismatched input ${field}`);
+        if (item.status === "derived") assert.ok(["selected", "derived"].includes(parent.status), `${id}: blocked input cannot supply a derived value`);
+      }
+    }
+  }
+  same(catalog.source_gate.selected_source_ids, [...selected], "Source gate and decisions disagree");
+  console.log(`PASS source decisions: ${expected.length - blocked} selected/derived, ${blocked} explicitly unavailable; ${selected.size} selected routes`);
+  console.log("History backfill, parsing, freshness, hosted access and blocked-source clearance remain downstream work.");
+}
+
+async function probeSources() {
+  // Manual verification only: one bounded GET per selected route, no retries/storage.
+  const fingerprints = {
+    mospi_gdp_pib: ["PROVISIONAL ESTIMATES OF ANNUAL GROSS DOMESTIC PRODUCT", "2022-23", "2025-26"],
+    commerce_trade_pib: ["Merchandise", "September 2026", "US$ Billion"],
+    mospi_cpi_pib: ["Combined", "2024", "September"],
+    finance_accounts_pib: ["Total Expenditure", "Revenue Account", "Capital Account"],
+  };
+  for (const id of catalog.source_gate.selected_source_ids) {
+    const source = sources.sources[id];
+    assert.equal(sources.reuse[source.reuse_id].collection_allowed, true);
+    const request = async (url) => {
+      const signal = AbortSignal.timeout(15000);
+      const response = await fetch(url, { signal, credentials: "omit", headers: { "User-Agent": "EconomicDashboard/0.1 source-verification", Accept: "application/json,text/html" } });
+      assert.equal(response.status, 200, `${id}: source HTTP ${response.status}`);
+      const reader = response.body.getReader();
+      const chunks = [];
+      let length = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          length += value.byteLength;
+          assert.ok(length <= 2_000_000, `${id}: verification response too large`);
+          chunks.push(value);
+        }
+      } finally { await reader.cancel(); }
+      const body = Buffer.concat(chunks).toString("utf8");
+      assert.ok(response.headers.get("content-type")?.includes(source.format === "json" ? "json" : "html"), `${id}: content type`);
+      return body;
+    };
+    const body = await request(source.url);
+    if (source.format === "json") {
+      assert.equal(id, "world_bank_gdp", "Add a source-specific probe before selecting a new JSON route");
+      const [meta, rows] = JSON.parse(body);
+      assert.equal(meta.sourceid, "2");
+      assert.ok(Array.isArray(rows) && rows.length <= 10);
+      const years = new Set();
+      for (const row of rows) {
+        assert.equal(row.countryiso3code, "WLD");
+        assert.equal(row.indicator.id, "NY.GDP.MKTP.KD.ZG");
+        assert.ok(/^\d{4}$/.test(row.date) && !years.has(row.date));
+        years.add(row.date);
+        assert.ok(row.value === null || (typeof row.value === "number" && Number.isFinite(row.value)));
+      }
+      assert.ok(rows.filter((row) => row.value !== null).length >= 5, "World GDP five-period history unavailable");
+      const [, metadata] = JSON.parse(await request(source.metadata_url));
+      assert.equal(metadata[0].id, "NY.GDP.MKTP.KD.ZG");
+      assert.equal(metadata[0].name, "GDP growth (annual %)");
+      assert.match(metadata[0].sourceNote, /constant price/i);
+    } else {
+      assert.ok(fingerprints[id], `${id}: add a source-specific verification fingerprint`);
+      const content = body.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ");
+      for (const marker of fingerprints[id]) assert.ok(content.includes(marker), `${id}: expected release marker missing: ${marker}`);
+    }
+    console.log(`PASS live source probe: ${id} (content checked in memory; not ingested)`);
+  }
 }

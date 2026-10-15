@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "stage": "M3.2",
+  "checked_on": "2026-10-16",
+  "status": "assessed_with_blockers",
+  "collection_implemented": false,
+  "rules": {
+    "selection": "Prefer NSE for the required observation when acquisition and reuse are usable. The fallbacks below are explicit choices, not claims that NSE publishes no macro data.",
+    "missing": "Blocked requirements return null/unavailable with their reason_code. No sample values, synthetic substitutions, guessed dates or automatic source switching.",
+    "release_discovery": "Concrete release URLs below are verified starting points, not permanent latest URLs. Discover newer releases from official indexes; validate title, period and revision before replacing a source URL.",
+    "history": "Retrieve and validate additional history in M3.5. A reachable release does not establish the entire five-period window or a previous-period comparison.",
+    "freshness": "Collector polling and stale thresholds are pending M3.6; preserve source observation precision, publication time when known, and separate retrieval/check times.",
+    "release_gate": "Recheck terms and hosted access before enabling a route. No publisher has been contacted and no subscription or permission has been obtained."
+  },
+  "reuse": {
+    "world_bank": {
+      "status": "attribution_required", "collection_allowed": true,
+      "url": "https://data.worldbank.org/summary-terms-of-use",
+      "constraint": "CC BY 4.0 with World Bank additional terms; credit WDI and original data providers, retain the terms link, identify transformations and imply no endorsement."
+    },
+    "pib": {
+      "status": "attribution_required", "collection_allowed": true,
+      "url": "https://www.pib.gov.in/content/3622_2_CopyrightPolicy.aspx",
+      "constraint": "Accurate attributed reproduction; third-party material is excluded. Collect the issuing ministry's release text/tables, not embedded third-party images."
+    },
+    "nse_research": {
+      "status": "publisher_notification_required", "collection_allowed": false,
+      "url": "https://nsearchives.nseindia.com/web/mediaattachment/2026-09/Market_Pulse_September_2026_Final.pdf#page=329",
+      "constraint": "The report's specific disclaimer requires NSE notification and acknowledgement for extracts. This has not been satisfied; general educational-use wording does not establish this route's clearance."
+    },
+    "nse_market": {
+      "status": "feed_rights_unverified", "collection_allowed": false,
+      "url": "https://www.nseindia.com/static/market-data/nse-data-policy",
+      "constraint": "Successful public JSON access does not establish scheduled feed and redistribution rights; relevant usage agreement/permission remains unresolved."
+    },
+    "bse_market": {
+      "status": "permission_required", "collection_allowed": false,
+      "url": "https://www.bseindices.com/terms-of-use",
+      "constraint": "Published terms restrict automated access and redistribution. No quote feed has been selected or licensed."
+    },
+    "gstn": {
+      "status": "reuse_not_verified", "collection_allowed": false,
+      "url": "https://tutorial.gst.gov.in/downloads/news/monthly_gst_data_for_mar_2026_for_publishing_final.pdf",
+      "constraint": "Official report is accessible and readable; reuse conditions for this GSTN-hosted release are not verified. GST Council's separate policy must not be assumed to cover this host."
+    },
+    "cga": {
+      "status": "ambiguous_policy", "collection_allowed": false,
+      "url": "https://cga.nic.in/Page/Web-Policies.aspx",
+      "constraint": "Published policy contains conflicting permission wording and references an unrelated institution. Use the verified Ministry of Finance release on PIB instead."
+    },
+    "imf": {
+      "status": "scope_review_required", "collection_allowed": false,
+      "url": "https://www.imf.org/en/about/copyright-and-terms",
+      "constraint": "Search-accessible policy describes limited noncommercial use and separate systematic/commercial reuse conditions; native policy request returned 403. Do not treat the public Data Mapper API as unrestricted."
+    },
+    "gazette": {
+      "status": "retrieval_blocked", "collection_allowed": false,
+      "url": "https://egazette.gov.in/WriteReadData/2026/271285.pdf",
+      "constraint": "Local TLS certificate-chain validation failed, including with the system CA store. Never disable certificate verification to collect it."
+    }
+  },
+  "sources": {
+    "nse_pulse": {
+      "publisher_id": "nse", "reuse_id": "nse_research", "format": "pdf", "access": "verified_local",
+      "url": "https://nsearchives.nseindia.com/web/mediaattachment/2026-09/Market_Pulse_September_2026_Final.pdf",
+      "discovery_url": "https://www.nseindia.com/static/research/publications-reports-nse-market-pulse",
+      "limits": "Monthly research publication; observation periods lag publication. Anchors below use one-based PDF pages and must be rediscovered by title/headers, not fixed page positions."
+    },
+    "nse_budget": {
+      "publisher_id": "nse", "reuse_id": "nse_research", "format": "pdf", "access": "verified_web",
+      "url": "https://nsearchives.nseindia.com/web/mediaattachment/2026-02/Union_Budget_2026-27_20260201_20260228100753.pdf",
+      "discovery_url": "https://www.nseindia.com/static/research/publications-reports-nse-market-insights",
+      "limits": "Budget report: actuals, RE and BE are distinct. Chart labels are not an approved numeric extraction method."
+    },
+    "nse_indices": {
+      "publisher_id": "nse", "reuse_id": "nse_market", "format": "json", "access": "verified_local",
+      "url": "https://www.nseindia.com/api/allIndices",
+      "discovery_url": "https://www.nseindia.com/market-data/live-market-indices",
+      "fields": { "rows": "data", "identity": "index", "value": "last", "change": "variation", "change_percent": "percentChange", "previous_close": "previousClose", "as_of": "timestamp" },
+      "limits": "timestamp is an envelope field; validate it against the quote session. Browser-oriented, undocumented endpoint: no availability SLA, verified delay or scheduled collection entitlement."
+    },
+    "nse_market_status": {
+      "publisher_id": "nse", "reuse_id": "nse_market", "format": "json", "access": "verified_local",
+      "url": "https://www.nseindia.com/api/marketStatus",
+      "fields": { "rows": "marketState", "identity": "market", "session": "tradeDate", "state": "marketStatus" },
+      "limits": "Use Capital Market only; do not substitute GIFT futures or another segment. Timestamp timezone/session must be validated with the index response."
+    },
+    "world_bank_gdp": {
+      "publisher_id": "world_bank", "reuse_id": "world_bank", "format": "json", "access": "verified_local",
+      "url": "https://api.worldbank.org/v2/country/WLD/indicator/NY.GDP.MKTP.KD.ZG?format=json&per_page=10",
+      "metadata_url": "https://api.worldbank.org/v2/indicator/NY.GDP.MKTP.KD.ZG?format=json",
+      "discovery_url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.KD.ZG",
+      "fields": { "metadata": "[0]", "rows": "[1]", "value": "value", "period": "date", "identity": "countryiso3code", "indicator": "indicator.id" },
+      "limits": "Source unit field is blank: verify indicator metadata, do not infer from it. Dataset lastupdated is not the observation publication date. Decimal-preserving parsing and bounded pagination belong to M3.4."
+    },
+    "mospi_gdp_pib": {
+      "publisher_id": "mospi", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
+      "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2269286",
+      "discovery_url": "https://www.mospi.gov.in/latest-releases",
+      "locator": "Annual GDP Estimates and Growth Rates; real GDP at constant 2022-23 prices, not nominal GDP or Q4 growth.",
+      "limits": "June 2026 PE release includes revisions. The new base does not establish a five-year comparable back series. Release images are not a text-table feed."
+    },
+    "commerce_trade_pib": {
+      "publisher_id": "commerce", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
+      "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2323944",
+      "discovery_url": "https://www.commerce.gov.in/ministryofcommerce/node/5157",
+      "locator": "Table 1, Merchandise rows, September 2026 and September 2025 columns, US$ Billion.",
+      "limits": "Exclude services estimates and cumulative Table 2. Validate merged headers; total-trade balance is not merchandise balance."
+    },
+    "mospi_cpi_pib": {
+      "publisher_id": "mospi", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
+      "url": "https://www.pib.gov.in/PressReleaseIframePage.aspx?PRID=2322244&lang=2&reg=48",
+      "discovery_url": "https://www.mospi.gov.in/latest-releases",
+      "locator": "All-India Combined headline CPI year-on-year inflation; identify Combined column, not rural, urban, CPI index level or food inflation.",
+      "limits": "Preserve provisional/final distinction. Old-base histories cannot be spliced into base 2024 without a verified bridge."
+    },
+    "gstn_gross": {
+      "publisher_id": "gstn", "reuse_id": "gstn", "format": "pdf", "access": "verified_local",
+      "url": "https://tutorial.gst.gov.in/downloads/news/monthly_gst_data_for_mar_2026_for_publishing_final.pdf",
+      "discovery_status": "current_official_release_index_not_verified",
+      "locator": "First page, A.3 Total Gross GST Revenue, Yearly columns ending March 2025 and March 2026; D.1 Cess is separate.",
+      "limits": "Provisional figures, excluding separately reported compensation cess. Reuse and a comparable longer history remain unresolved; old gross-including-cess totals are incompatible."
+    },
+    "cga_accounts": {
+      "publisher_id": "cga", "reuse_id": "cga", "format": "html", "access": "verified_local",
+      "url": "https://cga.nic.in/writereaddata/MonthAccount/82026/DATA2627.htm",
+      "discovery_url": "https://cga.nic.in/Page/Monthly-Accounts-Review.aspx",
+      "locator": "Actuals column only: Revenue Expenditure, Capital Expenditure and Total Expenditure.",
+      "limits": "Unaudited provisional April-to-August cumulative actuals; BE amounts and COPPY percentages are different measures. Published web policy is ambiguous."
+    },
+    "finance_accounts_pib": {
+      "publisher_id": "cga", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
+      "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2317034",
+      "discovery_url": "https://www.pib.gov.in/",
+      "locator": "Total Expenditure paragraph; Revenue Account and Capital Account amounts, in crore.",
+      "limits": "Cumulative provisional actuals, not monthly flows. Prior-year amounts and additional history require separate validated releases."
+    },
+    "imf_debt": {
+      "publisher_id": "imf", "reuse_id": "imf", "format": "json", "access": "verified_local",
+      "url": "https://www.imf.org/external/datamapper/api/v1/GGXWDG_NGDP/IND",
+      "metadata_url": "https://www.imf.org/external/datamapper/api/v1/indicators",
+      "fields": { "observations": "values.GGXWDG_NGDP.IND", "metadata": "indicators.GGXWDG_NGDP" },
+      "limits": "Country URL returned other countries too; explicitly select IND. Response mixes historical and future years without per-value actual/estimate flags. Actual cutoff, Indian reporting basis and reuse scope need verification."
+    },
+    "inflation_target_gazette": {
+      "publisher_id": "dea", "reuse_id": "gazette", "format": "pdf", "access": "blocked_tls",
+      "url": "https://egazette.gov.in/WriteReadData/2026/271285.pdf",
+      "corroborating_url": "https://www.bis.org/speeches/20260506-inflation-targeting-india-past-present-and-future",
+      "limits": "Primary notification and exact effective interval have not been read successfully. The speech does not replace that interval check; no static target value is embedded here."
+    },
+    "bse_sensex": {
+      "publisher_id": "bse", "reuse_id": "bse_market", "format": "html", "access": "page_only",
+      "url": "https://www.bseindices.com/indices-details/code/16",
+      "limits": "The HTML shell is not quote data. No usable, permitted timestamped quote response has been verified; do not substitute BSE company stock."
+    }
+  },
+  "nse_assessments": {
+    "gdp_growth_india": { "source_ids": ["nse_pulse"], "result": "published", "locator": "PDF p321 annual macro snapshot, GDP (Constant) Growth row", "selection_reason": "Research extract notice/reuse gate unresolved; use MoSPI release via PIB." },
+    "gdp_growth_world": { "source_ids": ["nse_pulse"], "result": "matching_series_not_verified", "locator": "Table 49 IMF projections", "selection_reason": "WDI WLD annual aggregate/history not verified in inspected NSE material; use World Bank, without claiming NSE-wide absence." },
+    "debt_to_gdp": { "source_ids": ["nse_budget"], "result": "partial_definition", "locator": "PDF p17 debt/liabilities charts", "selection_reason": "Central/state liabilities do not establish a comparable general-government gross debt series; IMF alternative remains gated." },
+    "trade": { "source_ids": ["nse_pulse"], "result": "partial_frequency", "locator": "PDF p84 quarterly BoP; p81 monthly growth rates", "selection_reason": "Monthly USD merchandise amounts not verified in inspected NSE tables; use Commerce release via PIB." },
+    "gst_collection": { "source_ids": ["nse_pulse"], "result": "related_figures_published", "locator": "Figures 92/93", "selection_reason": "Research reuse and matching cess coverage unresolved; GSTN alternative is also gated." },
+    "inflation_india": { "source_ids": ["nse_pulse"], "result": "history_published", "locator": "PDF p81 CPI YoY row", "selection_reason": "Research reuse unresolved; use current MoSPI release via PIB." },
+    "rbi_target": { "source_ids": ["nse_pulse"], "result": "partial_policy", "locator": "Inflation discussion", "selection_reason": "No complete legal validity interval verified; primary notification retrieval blocked." },
+    "government_expenditure": { "source_ids": ["nse_pulse"], "result": "published", "locator": "Tables 43/44", "selection_reason": "Research reuse unresolved; use Finance/CGA actuals release via PIB, keeping cumulative periods." },
+    "nifty_bank": { "source_ids": ["nse_indices", "nse_market_status"], "result": "published", "locator": "data[index=NIFTY BANK]", "selection_reason": "Preferred NSE route verified; feed usage and cadence gates remain." },
+    "nifty_it": { "source_ids": ["nse_indices", "nse_market_status"], "result": "published", "locator": "data[index=NIFTY IT]", "selection_reason": "Preferred NSE route verified; feed usage and cadence gates remain." },
+    "sensex": { "source_ids": ["nse_indices"], "result": "matching_instrument_not_verified", "locator": "Index response reviewed", "selection_reason": "Required BSE index quote not verified at NSE; BSE route remains permission-gated." }
+  },
+  "requirements": {
+    "gdp_growth_india": {
+      "status": "selected", "source_id": "mospi_gdp_pib", "nse_assessment_id": "gdp_growth_india",
+      "definition_id": "india_real_gdp_annual_fy_2022_base_v1", "unit": "percent_yoy", "frequency": "annual", "basis": "fiscal",
+      "definition": "Annual real GDP growth, constant 2022-23 prices, India April-March FY; preserve PE/FRE and release vintage.",
+      "comparison": "Previous comparable FY growth, delta in percentage points; no India-World difference across unlike periods.",
+      "history": "Latest and prior FY growth verified in release text; longer comparable back series pending. Label FY separately from World CY in the M4 projection."
+    },
+    "gdp_growth_world": {
+      "status": "selected", "source_id": "world_bank_gdp", "nse_assessment_id": "gdp_growth_world",
+      "definition_id": "wdi_wld_real_gdp_annual_v1", "unit": "percent_yoy", "frequency": "annual", "basis": "calendar",
+      "definition": "WDI NY.GDP.MKTP.KD.ZG, WLD aggregate annual real GDP growth; preserve source year labels and metadata vintage.",
+      "comparison": "Previous available consecutive year growth, delta in percentage points; never invent a missing reference year.",
+      "history": "Ten annual non-null observations verified; display target is latest five validated years. Preserve year precision, no invented day."
+    },
+    "debt_to_gdp_india": {
+      "status": "blocked", "source_id": "imf_debt", "nse_assessment_id": "debt_to_gdp",
+      "definition_id": "india_general_government_gross_debt_ratio_v1", "unit": "percent_of_gdp", "frequency": "annual", "basis": null,
+      "definition": "General-government gross debt as a share of GDP, India; not central debt, external debt or private debt.",
+      "reason_code": "debt_period_actuals_and_reuse_unverified", "unblock": "Verify Indian reporting-year basis, last actual year and intended reuse scope before selecting observations. No forecast-as-actual substitution."
+    },
+    "imports": {
+      "status": "selected", "source_id": "commerce_trade_pib", "nse_assessment_id": "trade",
+      "definition_id": "india_merchandise_imports_monthly_usd_v1", "unit": "usd_billion", "frequency": "monthly", "basis": "calendar",
+      "definition": "Reported monthly merchandise imports at current USD billions; exclude services and cumulative FY totals.",
+      "comparison": "Same month of previous year, percentage change from comparable monetary amounts; not percentage points.",
+      "history": "September 2026 and prior-year month verified. Additional monthly releases must be discovered and validated in M3.5."
+    },
+    "exports": {
+      "status": "selected", "source_id": "commerce_trade_pib", "nse_assessment_id": "trade",
+      "definition_id": "india_merchandise_exports_monthly_usd_v1", "unit": "usd_billion", "frequency": "monthly", "basis": "calendar",
+      "definition": "Reported monthly merchandise exports at current USD billions; same scope and period as imports.",
+      "comparison": "Same month of previous year, percentage change from comparable monetary amounts; not percentage points.",
+      "history": "Same verified monthly coverage as imports; revisions must use one release vintage for each paired point."
+    },
+    "trade_balance": {
+      "status": "derived", "source_id": "commerce_trade_pib", "nse_assessment_id": "trade",
+      "definition_id": "india_merchandise_balance_monthly_usd_v1", "unit": "usd_billion", "frequency": "monthly", "basis": "calendar",
+      "definition": "Merchandise exports minus imports; a deficit is negative. Not the release's goods-plus-services balance.",
+      "inputs": ["exports", "imports"], "transform_id": "exports_minus_imports_v1",
+      "gate": "M3.5: decimal arithmetic, matched month/unit/coverage/vintage, retain both inputs; any missing input gives null."
+    },
+    "gst_total": {
+      "status": "blocked", "source_id": "gstn_gross", "nse_assessment_id": "gst_collection",
+      "definition_id": "india_gst_gross_excluding_cess_full_fy_v1", "unit": "inr_crore", "frequency": "annual", "basis": "fiscal",
+      "definition": "Full April-March FY, reported Total Gross GST Revenue excluding separately reported compensation cess; provisional, before refunds.",
+      "reason_code": "gstn_reuse_unverified", "unblock": "Verify reuse or a compatible official republished table; retain gross/net/cess distinctions and validate reporting window. No rounded infographic or growth-rate replacement."
+    },
+    "gst_monthly_average": {
+      "status": "blocked", "source_id": "gstn_gross", "nse_assessment_id": "gst_collection",
+      "definition_id": "india_gst_gross_excluding_cess_full_fy_monthly_mean_v1", "unit": "inr_crore", "frequency": "annual", "basis": "fiscal",
+      "definition": "Monthly mean over the same complete April-March FY as gst_total, excluding compensation cess.",
+      "inputs": ["gst_total"], "transform_id": "complete_fy_total_divided_by_12_v1",
+      "gate": "M3.5: only divide an explicitly verified complete twelve-month total; never apply to a partial FY or mixed cess coverage.",
+      "reason_code": "gstn_reuse_unverified", "unblock": "Clear total's source/window gate and validate the annual-to-monthly transform."
+    },
+    "cpi_yoy": {
+      "status": "selected", "source_id": "mospi_cpi_pib", "nse_assessment_id": "inflation_india",
+      "definition_id": "india_cpi_combined_headline_yoy_2024_base_v1", "unit": "percent_yoy", "frequency": "monthly", "basis": "calendar",
+      "definition": "All-India Combined headline CPI YoY, base 2024=100, reported monthly; preserve provisional/final status.",
+      "comparison": "Previous month reported YoY rate, delta in percentage points, only if same base and comparable vintage.",
+      "history": "Current release and its revised prior month; remaining comparable monthly history is M3.5 work. Do not average monthly YoY rates into an annual CPI measure."
+    },
+    "rbi_target": {
+      "status": "blocked", "source_id": "inflation_target_gazette", "nse_assessment_id": "rbi_target",
+      "definition_id": "india_cpi_inflation_policy_target_v1", "unit": "percent", "frequency": "policy_event", "basis": "calendar",
+      "definition": "Applicable notified CPI inflation target and effective interval; policy reference, not an observed inflation rate or repo rate.",
+      "reason_code": "policy_primary_interval_not_verified", "unblock": "Read the primary notification with valid TLS; verify exact valid_from/valid_to and target. Historical targets need their own valid intervals; no PNG constant."
+    },
+    "expenditure_capital": {
+      "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
+      "definition_id": "union_capital_expenditure_provisional_fy_ytd_v1", "unit": "inr_crore", "frequency": "monthly_cumulative", "basis": "fiscal",
+      "definition": "Union government provisional actual capital-account expenditure, April through the named month; not BE or effective capital expenditure.",
+      "comparison": "Same cutoff of prior FY using actual amounts; omit until acquired. COPPY utilisation percentages are not prior-year amounts.",
+      "history": "August 2026 cutoff verified; successive cumulative snapshots are not summed or presented as monthly flows."
+    },
+    "expenditure_revenue": {
+      "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
+      "definition_id": "union_revenue_expenditure_provisional_fy_ytd_v1", "unit": "inr_crore", "frequency": "monthly_cumulative", "basis": "fiscal",
+      "definition": "Published Union revenue-account expenditure, same provisional actual period as capital; not revenue receipts.",
+      "comparison": "No separate summary; any later comparison needs matched fiscal cutoffs and actuals.",
+      "history": "Same validated releases as capital; do not derive a complementary stack value to hide a missing source field."
+    },
+    "expenditure_total": {
+      "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
+      "definition_id": "union_total_expenditure_provisional_fy_ytd_v1", "unit": "inr_crore", "frequency": "monthly_cumulative", "basis": "fiscal",
+      "definition": "Published Union total expenditure, same provisional actual period as revenue and capital; reconcile all three on source precision.",
+      "comparison": "Same cutoff of prior FY using actual amounts, percentage growth only after comparability verification.",
+      "history": "Supplied total for each cumulative cutoff, no frontend calculation and no annual relabelling."
+    },
+    "nifty_bank": {
+      "status": "blocked", "source_id": "nse_indices", "nse_assessment_id": "nifty_bank",
+      "definition_id": "nse_nifty_bank_price_index_v1", "unit": "index_points", "frequency": "market_session_quote", "basis": "calendar",
+      "definition": "NIFTY BANK price index; last, point change and percent change against previous official close, with an Asia/Kolkata quote/session timestamp.",
+      "auxiliary_source_ids": ["nse_market_status"], "reason_code": "market_feed_rights_and_cadence_unverified", "unblock": "Establish permitted feed usage, delay, refresh cadence and session/timestamp handling; remain unavailable with unknown cadence until then."
+    },
+    "nifty_it": {
+      "status": "blocked", "source_id": "nse_indices", "nse_assessment_id": "nifty_it",
+      "definition_id": "nse_nifty_it_price_index_v1", "unit": "index_points", "frequency": "market_session_quote", "basis": "calendar",
+      "definition": "NIFTY IT price index, same previous-close and timezone rules as NIFTY BANK; not a stock, total-return index or futures quote.",
+      "auxiliary_source_ids": ["nse_market_status"], "reason_code": "market_feed_rights_and_cadence_unverified", "unblock": "Clear the NSE feed usage/cadence gate and validate quote/session alignment before enabling."
+    },
+    "sensex": {
+      "status": "blocked", "source_id": "bse_sensex", "nse_assessment_id": "sensex",
+      "definition_id": "bse_sensex_price_index_v1", "unit": "index_points", "frequency": "market_session_quote", "basis": "calendar",
+      "definition": "BSE SENSEX price index, previous official close, quote timestamp and session; not NSE-listed BSE company stock.",
+      "reason_code": "sensex_permitted_quote_route_unverified", "unblock": "Verify a permitted timestamped BSE index feed; app-shell HTTP 200 is insufficient."
+    },
+    "debt_india_us_comparison": {
+      "status": "blocked", "source_id": "imf_debt", "nse_assessment_id": "debt_to_gdp",
+      "definition_id": null, "unit": null, "frequency": "annual", "basis": null,
+      "definition": "Design does not establish US ratio versus India-US gap. Keep the existing unbound summary slot unavailable.",
+      "reason_code": "comparison_definition_unresolved", "unblock": "Approve the statistic, align geography coverage/periods/vintage and update canonical bindings before adding a series."
+    }
+  }
+}
