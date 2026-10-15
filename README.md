@@ -181,7 +181,8 @@ it works through standard HTTPS requests and avoids persistent-stream reconnect
 logic. **Alternative:** SSE remains a future interface change if justified by
 measured requirements. **Constraints/consequence:** M6 polls the authenticated
 dashboard API every 60 seconds while visible, avoids overlapping requests, pauses
-when hidden, refreshes on return and backs off failures up to five minutes. M3
+when hidden, refreshes on return and backs off transient network/server failures
+up to five minutes; an explicit rate-limit retry delay may be longer. M3
 sets source-specific collection cadences; polling does not imply tick-level data.
 Retained observations keep their original dates and are marked stale on refresh
 failure. **Verification/owners:** M4/M6 test request timing, session expiry,
@@ -226,6 +227,267 @@ All live checks below are **pending**, not results established by M1.4.
 [Render HTTP health checks](https://render.com/docs/health-checks) can target a
 configured path. Add that setting only after M4 implements the route; the current
 bootstrap route is not a substitute for the final health contract.
+
+## Cross-module contracts — M1.5
+
+This is the agreed interface baseline for M2–M5, replacing the planners'
+illustrative payloads. It does not implement the routes, authentication, collector
+or database. M4 owns final Pydantic models/SQL schemas; changes to these meanings
+or required fields must update this agreement and its consumers.
+
+### API version, routes and access — ADR-07/08
+
+Business/auth routes use `/api/v1`. Additive optional metadata may remain in v1;
+breaking names, types or meanings require an explicit contract revision and
+coordinated consumers, or a new API version.
+
+| Method/path | Access | Contract owner/purpose |
+| --- | --- | --- |
+| `GET /` | Public | Existing non-sensitive bootstrap message; no economic data |
+| `GET /health` | Public | M4: local service/database readiness; 200 when ready, 503 otherwise; no source fetch or secrets |
+| `POST /api/v1/auth/login` | Public, throttled | M5: JSON `username` and `password`; generic 401 on invalid credentials |
+| `GET /api/v1/auth/me` | Bearer token | M5: current user's opaque `id` and normalized `username` |
+| `GET /api/v1/indicators` | Bearer token | M4: indicator/series definitions, units, available periods and supported controls |
+| `GET /api/v1/dashboard` | Bearer token | M4: ticker plus all six panels; primary boot/poll request |
+| `GET /api/v1/indicators/{indicator_id}` | Bearer token | M4: selected panel's series, summaries and comparisons |
+| `GET /api/v1/indicators/{indicator_id}/history` | Bearer token | M4: bounded history for validated series/period selections |
+| `GET /api/v1/ticker` | Bearer token | M4: individually attributed/timestamped verified market quotes |
+| `OPTIONS` for API routes | No token; exact-origin CORS | M5: browser preflight; never returns protected application data |
+| `/docs`, `/openapi.json` | Public in development; disabled by default in production | M5 applies the production policy; repository documentation remains available to evaluators |
+| Collector ingestion | In-process only | M3 calls M4's transactional ingest service; no public HTTP ingestion route |
+
+There is no `/updates` endpoint in this polling design. Every data route is
+protected on FastAPI independently of React guards and CORS. Unknown indicator
+or series resources return 404; invalid query/period selections return 422.
+Indicator detail accepts an optional catalog `period_id`; an absent observation
+for an explicitly selected valid period stays null, never silently switching to
+another period. The history query accepts optional `series_id`,
+`from_period`, `to_period` and `limit`. Period IDs come from the catalog, are
+inclusive and must share a comparable period type; clients do not infer fiscal
+boundaries. `limit` defaults to 120, with an allowed range of 1–500 points per series.
+Return the latest matching window in chronological order and report `truncated`
+when more matching points exist. M2's audited controls determine the offered
+windows; this contract does not invent additional controls.
+
+### Stable indicator and series identifiers
+
+| `indicator_id` | Initial series IDs/roles |
+| --- | --- |
+| `gdp_growth` | `gdp_growth_india`, `gdp_growth_world` |
+| `debt_to_gdp` | `debt_to_gdp_india`; audited comparison series added explicitly to the catalog |
+| `trade` | `imports`, `exports`, `trade_balance` |
+| `gst_collection` | `gst_total`, `gst_monthly_average`; distinct growth series if required by the audited view |
+| `inflation_india` | `cpi_yoy`, `rbi_target` |
+| `government_expenditure` | `expenditure_total`, `expenditure_capital`, `expenditure_revenue` |
+
+The ticker has its own endpoint and `instrument_id` catalog. M3 verifies each
+instrument's identity/provider mapping; a non-NSE instrument must not receive NSE
+attribution. Series/catalog IDs are stable application identifiers, independent
+of display labels. M2/M3 must still verify debt comparison meaning, GST definitions,
+budget coverage and exact Figma control windows. An unresolved definition is
+reported unavailable with a reason, rather than filled with an assumed figure.
+
+Ticker items use `instrument_id`, `name`, `value`, `change`, `change_percent`,
+`unit`, `market_status` (`open`, `closed`, `unknown`) and the same provenance/date/
+status metadata as observations. Numeric fields are decimal strings or null;
+change is measured against a verified previous trading close, with null changes
+when that reference is unavailable. A closed market retains its real quote time.
+
+### Observation, provenance and numeric conventions — ADR-08
+
+M3's collector hands M4 a normalized batch with `run_id`, source identity,
+`started_at`, `completed_at`, outcome (`updated`, `no_new_observation`, `partial`
+or `failed`), validated observations and classified failures. Rejected raw records
+never become public observations. Missing/failure events cannot overwrite a
+previous valid value. Repeated runs must be idempotent, and verified revisions
+must preserve the earlier observation's traceability.
+
+The following logical fields are shared across collector, storage and API
+adapters; M4 maps storage IDs into the public view rather than exposing raw tables.
+
+| Field/group | Required meaning |
+| --- | --- |
+| `indicator_id`, `series_id`, `definition_id` | Stable identity plus the verified definition (geography, coverage, real/nominal basis, actual/estimate status as applicable) |
+| `observation_period` | Canonical `id`, source-facing `label`, `type`, calendar/fiscal basis and verified `start`/`end` boundaries where known |
+| `value` | Finite decimal string or `null`; raw collector arithmetic uses Decimal; API never silently rounds or sends NaN/infinity |
+| `unit` | Explicit code such as `percent_yoy`, `percent_of_gdp`, `percent`, `percentage_points`, `inr_crore`, `usd_billion` or `index_points` |
+| `as_of`, `as_of_kind`, `as_of_precision` | M3's observation date or explicitly identified reporting-period end; never the API request time |
+| `published_at` | Source publication date/time at its known precision; otherwise `null`, without inventing a release timestamp |
+| `retrieved_at` | UTC time of the successful source payload underlying the observation |
+| `last_checked_at`, `last_success_at` | Latest collection attempt and latest successful check, including a valid no-new-release result |
+| `sources` | Array of verified `{source_id, name, url, is_nse}` references; direct points normally have one, derived points preserve all input sources |
+| `transform_id`, `input_observation_ids` | Versioned calculation and traceable inputs for derived observations; absent/null for direct observations |
+| `revision_id`, `run_id` | Revision/correlation identifiers for reproducibility, without exposing raw secret-bearing payloads |
+| `status`, `reason_code`, `stale_after`, `retention_allowed`, `limitations` | Availability/freshness state, safe reason, source-specific deadline, explicit permission to retain a display copy on transport failure, and interpretation limits |
+
+Retrieval/run timestamps use RFC 3339 UTC with `Z`; dates use ISO calendar
+notation. `as_of_precision` is `year`, `month`, `day` or `instant`, represented as
+`YYYY`, `YYYY-MM`, `YYYY-MM-DD` or a UTC timestamp respectively. `as_of_kind` is
+`observation` or `period_end`. An unknown date stays null; the verified reporting
+period remains visible. Publication dates retain their actual precision.
+Period types are `instant`, `day`, `month`, `quarter`, `year` and `fiscal_year`;
+quarter/year labels never silently imply a fiscal calendar. Policy references
+such as the RBI target also carry their source and known validity interval.
+
+Valid observations require verified provenance and reporting-period metadata.
+Missing points may contain null value/date/source fields with an explicit reason.
+The UI displays missing numbers as `—`; a genuine zero remains zero. Decimal
+strings preserve precision in storage/transport; the frontend converts validated
+values to finite numbers only for chart geometry and applies unit-aware display
+rounding. Financial calculations remain on the backend.
+
+Comparisons require aligned definitions, units and periods; otherwise return
+`comparison: null` plus `comparison_reason_code`. A comparison identifies its
+reference series/period and kind (`previous_period`, `previous_year`,
+`other_geography` or `policy_reference`). Subtracting percentage rates yields percentage
+points, not percent growth. Relative change is `(current - previous) / previous *
+100` only for a positive previous value; other denominators produce null with a
+reason unless a separate verified transformation defines the calculation.
+Trade balance is exports minus imports for matching coverage/currency/period.
+GST averages declare their complete monthly window. Expenditure separates actuals,
+provisional data, revised estimates and budget estimates. No interpolation,
+forward-fill, mixed fiscal/calendar comparisons or Figma illustration figures
+may masquerade as observed data.
+
+ADR-08 chooses lossless decimal strings, explicit units and typed UTC/period
+metadata over bare floating-point values and ambiguous date labels. M3/M4 own
+normalization and final models; M2 adapts display types and M6 verifies the mapping.
+
+### Response envelope, partial data and errors
+
+Successful data-read responses contain `data` and `meta`. Login returns the
+unwrapped token object defined below; `/auth/me` returns a minimal unwrapped
+`{id, username}` profile. Metadata for data-read responses
+includes `api_version: "v1"`, UTC `generated_at`, opaque `version` and `partial`.
+Dashboard data contains `ticker` and `panels`, with panels keyed by the six
+indicator IDs. Series, quotes and requested history ranges have independent
+statuses. Keep independently valid series when another is missing; `partial`
+signals missing/failed required content without hiding the valid parts.
+
+Each panel's `series` is keyed by `series_id`. A series exposes `latest` as an
+observation object (including `value: null` when unavailable), `comparison`, and
+its chart `history` result. History results contain `points`, `status` and
+`truncated`; the dedicated history route returns those results keyed by series.
+Ticker data contains `items`. Catalog data contains an `indicators` list with
+series definitions and available period/control options. M4 finalizes additional
+model fields without silently changing these access paths or meanings.
+
+`version` represents data, revisions, provenance and reported freshness/availability
+changes. `generated_at` alone is not an observation update. Clients consume returned
+freshness metadata on every poll, even when the economic value did not change.
+
+| State | Meaning and HTTP/UI behavior |
+| --- | --- |
+| `fresh` | Valid observation and successful checks within that source's release-aware policy; its observation date may still be historical |
+| `stale` | A valid observation is retained after a failed due refresh or exceeded freshness deadline; preserve its value/date and show the stale reason |
+| `empty` | A successful, supported history query has no observations in the requested range; return an empty list and a useful message |
+| `unavailable` | No usable observation exists, including unverified source, not-yet-collected or failed first fetch; value is null with a reason |
+| `error` | Processing failed; panel-local failure may accompany independently valid panels, while a failed whole read returns a non-2xx error envelope |
+
+Loading is client request state, not an invented observation status. Upstream
+outage with a valid retained snapshot returns 200 plus stale metadata. No valid
+snapshot returns honest unavailable fields; a database outage returns 503 instead
+of pretend dashboard success. Successful no-new-release checks do not make annual
+or monthly series stale solely because their observation date is old. M3 defines
+the per-source calendar/deadline; there is no global 60-second freshness TTL.
+
+Errors use this shape (illustrative structure, not an actual request result):
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request.",
+    "details": [{"field": "query.limit", "message": "Unsupported limit."}]
+  },
+  "request_id": "<generated correlation ID>"
+}
+```
+
+Use 401 `UNAUTHORIZED` with `WWW-Authenticate: Bearer` for absent/invalid/expired
+identity; 403 `FORBIDDEN` for authenticated permission denial; 404 `NOT_FOUND` for
+unknown resources; 422 `VALIDATION_ERROR` for invalid input; 429 `RATE_LIMITED`
+with `Retry-After`; 503 `SERVICE_UNAVAILABLE` for unavailable local dependencies;
+and 500 `INTERNAL_ERROR` for an unexpected failure. Details contain safe field
+names/messages, never rejected password/token values, SQL, internal paths or stack
+traces. M4 implements common handlers; M5 integrates auth failures with them.
+
+### Authentication/session agreement — ADR-07
+
+- Provision evaluator accounts privately; no public registration. M5 uses a
+  maintained password-hashing implementation (Argon2id baseline), with M4-owned
+  migration mechanics and password hashes instead of plaintext.
+- Login accepts JSON `username` and `password`. Success returns `access_token`,
+  `token_type: "bearer"`, integer `expires_in` seconds, UTC `expires_at`, and a
+  minimal `user` (`id`, `username`). Responses/logs never echo the password.
+- Choose HS256 with a server-held secret generated from at least 32 cryptographic
+  random bytes. M5 validates an explicit algorithm allowlist, signature, required
+  `sub`, `iat`, `exp`, `iss`, `aud`, and the active identity. Issuer is
+  `economic-dash-api`; audience is `economic-dash-web`. Lifetime defaults to
+  30 minutes via `ACCESS_TOKEN_EXPIRE_MINUTES`, with at most 30 seconds of server
+  clock-skew allowance. Reject unsigned, wrong-algorithm and malformed tokens.
+- The signing secret is supplied only through backend configuration (`JWT_SECRET`);
+  issuer/audience are `JWT_ISSUER`/`JWT_AUDIENCE`. Names are reserved here; M5 adds
+  their validated settings and safe examples. Never publish actual key material.
+- React keeps the access token and protected responses in memory and sends
+  `Authorization: Bearer <token>` over HTTPS. No tokens in URLs, local/session
+  storage or cookies. There is no refresh-token flow; page reload requires sign-in.
+- Expiry or any protected-request 401 stops polling, aborts pending requests,
+  clears token/protected data and returns to sign-in. Do not replay passwords or
+  silently retry unauthorized requests. Logout performs the same local cleanup.
+- Stateless logout does not revoke a previously issued token server-side; it
+  remains usable until expiry unless its account is disabled or the key rotates.
+  Immediate per-token revocation is outside this initial policy.
+- M5 expands CORS to GET/POST/OPTIONS and `Authorization`/`Content-Type`, exposes
+  `Retry-After` if used by the client, and keeps `allow_credentials=false` with
+  fetch credentials omitted. Production permits only the actual HTTPS frontend
+  origin. No-token preflights are handled without bypassing route authentication.
+
+JWT claim/validation basis: [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)
+and [JWT best current practices](https://www.rfc-editor.org/rfc/rfc8725).
+These are application policy choices to implement/test in M5, not claims that
+authentication already exists in the current scaffold.
+
+ADR-07 chooses short-lived memory bearer tokens over persistent cookie/refresh
+sessions to simplify separate-site authentication. Reload requires re-login and
+logout does not provide immediate token revocation. M5/M6 verify guards, expiry,
+cleanup and cross-origin behavior.
+
+### Refresh, cache and consumer handoff
+
+Use the ADR-06 60-second visible/signed-in polling policy. Start with an immediate
+dashboard fetch, allow only one in-flight poll with a 15-second timeout, pause
+hidden tabs, refresh on return and back off network/5xx failures to a maximum of
+five minutes; honor
+delta-seconds `Retry-After` on 429 even when it exceeds that cap. Stop at expiry/401;
+other non-retryable 4xx failures are surfaced rather than repeatedly retried.
+A transport failure keeps only the current session's previously validated data
+with backend `retention_allowed: true` (absent means false), visibly marks it
+stale/disconnected
+and preserves original source dates; first-load failure shows an error with no
+invented figures. Recovery replaces it only with a validated API response.
+
+M4 serves stored/validated snapshots and may cache them server-side. Browser
+polling never triggers source HTTP acquisition. Auth/token/data responses use
+`Cache-Control: no-store`; initial polling uses full responses and `version`
+metadata rather than ETag/304. No authenticated payload enters a shared public
+CDN cache or persistent browser storage.
+[Cache-Control semantics](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control).
+
+Contract review against the M2–M5 planners:
+
+| Consumer | Agreed boundary and later verification |
+| --- | --- |
+| M2 | Typed adapter, independent series states, decimal/unit/date formatting, real control options and source/as-of labels; verify with its Figma audit |
+| M3 | Validated records, provenance, period definitions, transformation references and release-aware run/failure metadata; verify against actual source samples |
+| M4 | Transactional ingest, stable read/error envelopes, revision/freshness versions and public health; implement final models and route tests |
+| M5 | Login/JWT/session contract, common guards, production docs policy, safe errors, exact-origin CORS and private evaluator provisioning; run negative auth tests |
+
+This review establishes interface agreement by the execution agent across the
+module planners. Source availability, exact Figma-derived catalog additions and
+live security/behavior remain explicitly unverified until their owning modules
+produce evidence. OpenAPI/consumer tests must confirm the final implementation;
+do not treat the conceptual examples above as working endpoints or real figures.
 
 ## Local setup
 
@@ -295,6 +557,10 @@ Wildcards and development defaults are rejected in production. Provider-specific
 deployment settings and authentication are addressed in later modules.
 
 ## Current API
+
+These routes describe the current scaffold. The M1.5 route/access table above is
+the target contract; its protected endpoints and production docs policy are not
+implemented yet.
 
 - `GET /`: public bootstrap response, `{"message":"Economic Indicators API"}`.
 - `GET /docs`: generated interactive API documentation.
