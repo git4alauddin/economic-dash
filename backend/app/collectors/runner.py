@@ -146,6 +146,10 @@ class CollectionRunner:
             async with self._active:
                 event("run_started", run_id=run_id, trigger=trigger, sources=sources, started_at=started, history=history)
                 try:
+                    # Another process/manual command may have committed since our
+                    # last run. Reload only while owning the shared collection lock.
+                    if self.repository_bridge:
+                        self.cache = self.repository_bridge.open_cache()
                     async with asyncio.timeout(self.settings.run_timeout):
                         async with self.client_factory() as client:
                             collection = await self.collect(client, sources, history=history, discovery_limit=self.settings.discovery_limit, cache=self.cache)

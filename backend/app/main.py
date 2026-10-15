@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import (DatabaseSettings, SchedulerSettings, Settings,
                         get_database_settings, get_scheduler_settings, get_settings)
 from app.database import Database
+from app.repository import SQLiteCollectionRepository
 from app.collectors.runner import CollectionRunner, configure_logging
 from app.collectors.scheduler import CollectorScheduler
 
@@ -29,7 +30,9 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         application.state.database = database
         if scheduler_settings.enabled:
             configure_logging()
-        collection_runner = runner if runner is not None else CollectionRunner(scheduler_settings)
+        repository = SQLiteCollectionRepository(database)
+        application.state.collection_repository = repository
+        collection_runner = runner if runner is not None else CollectionRunner(scheduler_settings, repository=repository)
         scheduler = CollectorScheduler(collection_runner, scheduler_settings)
         application.state.collection_runner = collection_runner
         application.state.collector_scheduler = scheduler

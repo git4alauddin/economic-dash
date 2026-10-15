@@ -62,7 +62,7 @@ class ConfigurationTests(unittest.TestCase):
             _env_file=None, app_env="production", cors_allowed_origins=[origin],
         )
         # CORS-only test; production mount/fail-closed behavior is tested separately.
-        with patch("app.main.Database.bootstrap"), TestClient(create_app(settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
+        with patch("app.main.Database.bootstrap"), patch("app.main.SQLiteCollectionRepository.load", return_value=None), TestClient(create_app(settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
             allowed = client.get("/", headers={"Origin": origin})
             denied = client.get("/", headers={"Origin": "http://localhost:5173"})
         self.assertEqual(allowed.headers["access-control-allow-origin"], origin)
