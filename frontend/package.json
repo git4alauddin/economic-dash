@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "verify:layout": "node scripts/verify-layout.mjs"
+    "verify:layout": "node scripts/verify-layout.mjs",
+    "verify:primitives": "node scripts/verify-layout.mjs --mode primitives",
+    "test:ui": "node --test scripts/test-ui.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

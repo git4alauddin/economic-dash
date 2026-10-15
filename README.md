@@ -23,7 +23,11 @@ M2.1 adds a provisional PNG-derived UI audit below. M2.2 implements the styled
 header, unavailable-data ticker and six-panel shell, with a repeatable browser
 layout check. Exact Figma properties and interaction states remain unverified.
 
-Indicator charts/summaries, authentic observations, database storage, authentication,
+M2.3 adds shared display/metadata/state components, SVG chart foundations and a
+development-only synthetic preview. The dashboard now uses shared unavailable
+states and source/date footers; the specialized panels remain M2.4 work.
+
+Six panel-specific charts/summaries, authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
 ## Planned scope
@@ -53,11 +57,17 @@ economic-dash/
       config.ts        Public API URL configuration
       dashboard-panels.ts  Stable panel IDs/titles; no observations
       components/      DashboardHeader, MarketTicker and reusable PanelShell
+        ui/            Values, comparisons, periods, states and source/as-of footer
+        charts/        SVG chart frame, point tooltips and legend
+      ui/              Presentation types, exact display formatting, plot geometry
+      preview/         Synthetic development-only component preview
       main.tsx         Browser entrypoint
       tokens.css       Shared provisional visual tokens
       styles.css       Shell, grid, surfaces and responsive layout
+      primitives.css   Shared UI/chart styling and developer preview layout
     scripts/
       verify-layout.mjs  Isolated Chromium viewport/screenshot checks
+      test-ui.mjs        Formatting and component tests using Node/Vite
     .env.example
     .npmrc
     index.html
@@ -634,8 +644,9 @@ two `SummaryCard` regions, its own chart, legends where shown, and a required
 `SourceAsOf`/availability region. These names describe the M2.1 component plan;
 M2.2 implements the header/ticker/panel shell, with `App` as the page and CSS Grid
 as the grid. Summary, chart and metadata primitives remain pending.
-Common axis, annotation, value/change, state and icon primitives
-belong to M2.3; chart-library/CSS/font decisions remain M2.2/M2.3 work.
+Common axis, annotation, value/change and state primitives belong to M2.3;
+its implementation and custom-SVG choice are recorded below. Final icons and
+font fidelity remain subject to U1 and the panel implementation.
 
 The header reads **ECONOMIC INDICATOR**, with red/blue candlestick decoration on
 a dark background. The full-width navy ticker has a red `LIVE` badge, separators,
@@ -735,11 +746,12 @@ page. No ticker animation is introduced at this checkpoint.
   800px single-column breakpoint. Panels have minimum heights, allowing later
   content to expand rather than being hidden behind a fixed-height clip.
 
-The two summary regions are decorative reservations for M2.3, and each panel has
+The two summary regions remain decorative reservations until M2.4, and each panel has
 a truthful unavailable/loading/error message. The ticker uses `NO DATA` with `—`
 quotes; it does not claim a live feed. Bootstrap connectivity is still checked
-through the configured API URL. Charts, authenticated observations, source/date
-footers and final ticker behavior remain later work.
+through the configured API URL. M2.3 adds the shared source/date footer and state
+components; charts, authenticated observations and final ticker behavior remain
+later work.
 
 ### Repeatable viewport check
 
@@ -772,6 +784,82 @@ Exact Figma matching remains open; this checkpoint verifies the provisional shel
 
 Driver references: [Chrome viewport emulation](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setDeviceMetricsOverride)
 and [screenshot capture](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot).
+
+## Shared primitives and chart foundation — M2.3
+
+| Component/helper | Responsibility |
+| --- | --- |
+| `SummaryValue`, `ComparisonChange` | Reusable value cards and signed changes; real zero remains zero and missing/invalid values render `—`. Change direction follows the supplied sign, without computing financial comparisons. |
+| `PeriodLabel` | Displays the supplied label and optional fiscal/calendar basis without deriving boundaries. |
+| `SourceAsOf` | Lists sources, marks non-NSE attribution and displays observation/period-end dates at their supplied precision; unknown provenance remains explicit. Links accept HTTP(S) without embedded credentials. |
+| `StateMessage` | Separate loading, fresh, stale, empty, error and unavailable messages; announcements are opt-in to avoid six simultaneous alerts. |
+| `ChartFrame`, `Legend` | SVG axes, supplied scales/ticks, reference lines, legends, inspectable points and an accessible data table. |
+| `ui/format.ts`, `ui/chart-geometry.ts` | Shared display/date validation and finite chart geometry, including missing-point path breaks. |
+
+**UI-ADR-01:** use composable custom SVG for the chart foundation. The reference
+requires several distinct bar/line/area combinations; shared axes, scales and
+inspection can support those without another package. A charting library remains
+an alternative if later panel fidelity/interaction needs justify it. M2 owns the
+custom rendering/accessibility work; M2.4 constructs the six specialized plots and
+M2.7/M6 verify their final behavior and fidelity.
+
+**UI-ADR-06, display policy:** callers explicitly provide audited units and display
+precision (0–6 decimal places). Plain signed decimal strings are formatted using
+BigInt arithmetic with half-away-from-zero display rounding; values above Number's
+safe integer range remain accurate. Currency grouping uses `en-IN` for INR crore
+and `en-US` otherwise. Rates use `%`, differences use `pp`, and currency amounts
+retain their currency/scale label. Unsupported representations, including raw
+scientific notation, stay missing; the later adapter must normalize them if needed.
+The presentation inputs are not a replacement for M4's final API models.
+
+Year/month/day dates retain that precision. UTC instants display their actual
+date/time in UTC; invalid calendar dates and offset/non-UTC instant strings are
+rejected. Unknown dates never fall back to retrieval time or today. Comparison
+arrows/colors communicate numeric increase/decrease, not economic desirability;
+backend calculations and compatible comparison definitions remain M3/M4 work.
+
+Chart domains, ticks, labels and reference values are explicit caller inputs.
+Only chart geometry converts valid decimal strings to finite numbers; overflow,
+underflow and out-of-domain points are not plotted as zero; unplottable non-null
+values have a visible note. Nulls split line
+paths instead of being bridged. Invalid/missing reference lines have a visible
+unavailable note. Tooltips respond to pointer hover and point focus; Escape
+dismisses them. Axis abbreviations retain full labels in SVG titles, and the
+screen-reader table provides the point values, including missing observations.
+
+### Preview and verification
+
+With Vite running, open **`http://127.0.0.1:5173/__ui-preview`**. This page clearly
+labels every example as synthetic; it covers positive/negative/zero/null values,
+large amounts, long labels, precision-aware dates, source metadata, all states,
+and a sample chart with a gap, real zero and a reference line. Its dynamic import
+is guarded by `import.meta.env.DEV`; the production build excludes its fixture
+module and example values. The production dashboard still has no observations.
+
+From `frontend/`:
+
+```powershell
+npm run test:ui
+npm run verify:primitives
+npm run verify:layout
+```
+
+The 12 Node/Vite tests verify decimal rounding/precision, missing versus zero,
+units, signs, valid/invalid dates, safe source links, period/state semantics,
+finite geometry, path gaps and chart reference/data alternatives. Browser preview
+checks cover 1214 × 2159, 390 × 844 and 320 × 740, including long-label overflow,
+SVG bounds, tooltip hover, focus on the zero-value point and Escape dismissal.
+Use the same browser/output/URL options as the layout check; preview artifacts
+default to `node_modules/.cache/layout-check/primitives/`.
+
+All 12 tests, three preview cases, four dashboard layout/failure cases and the
+production build passed. Production JS was checked for absent synthetic fixture
+markers/values. Private screenshots/reports are recorded in the implementation
+log. Final panel charts, actual API adaptation, source definitions, authentication
+and exact Figma parity remain with their owning tasks.
+
+Test tooling references: [Node test runner](https://nodejs.org/api/test.html) and
+[Vite module loading](https://vite.dev/guide/ssr.html#setting-up-the-dev-server).
 
 ## Local setup
 

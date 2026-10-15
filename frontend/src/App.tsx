@@ -4,6 +4,8 @@ import DashboardHeader from "./components/DashboardHeader";
 import MarketTicker from "./components/MarketTicker";
 import PanelShell from "./components/PanelShell";
 import { dashboardPanels } from "./dashboard-panels";
+import StateMessage from "./components/ui/StateMessage";
+import SourceAsOf from "./components/ui/SourceAsOf";
 
 export default function App() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -27,11 +29,6 @@ export default function App() {
     ready: "Dashboard data is not available yet.",
     error: "Unable to reach the dashboard service.",
   }[status];
-  const panelMessage = {
-    loading: "Loading…",
-    ready: "Data unavailable",
-    error: "Unable to load data",
-  }[status];
 
   return (
     <div className="dashboard-page" data-dashboard-root data-api-state={status}>
@@ -54,8 +51,9 @@ export default function App() {
                 </div>
                 <div className="panel-empty">
                   <span className="empty-mark" aria-hidden="true">—</span>
-                  <p>{panelMessage}</p>
+                  <StateMessage state={status === "ready" ? "unavailable" : status} />
                 </div>
+                <SourceAsOf sources={[]} asOf={null} />
               </div>
             </PanelShell>
           ))}
