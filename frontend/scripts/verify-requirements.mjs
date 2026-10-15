@@ -132,6 +132,10 @@ function verifySources(series) {
   assert.equal(sources.stage, "M3.2");
   assert.equal(sources.status, "assessed_with_blockers");
   assert.equal(sources.collection_implemented, false, "M3.2 does not implement collection");
+  publicUrl(sources.release_index.url);
+  assert.equal(sources.release_index.access, "verified_local");
+  assert.equal(sources.release_index.reuse_id, "pib");
+  text(sources.release_index.scope, "Release discovery scope");
   assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(sources.checked_on));
   for (const reuse of Object.values(sources.reuse)) {
     publicUrl(reuse.url);
@@ -215,7 +219,7 @@ function verifySources(series) {
   }
   same(catalog.source_gate.selected_source_ids, [...selected], "Source gate and decisions disagree");
   console.log(`PASS source decisions: ${expected.length - blocked} selected/derived, ${blocked} explicitly unavailable; ${selected.size} selected routes`);
-  console.log("M3.5 bounded history routes verified; scheduling, freshness, hosted access and blocked-source clearance remain open.");
+  console.log("Bounded history and release discovery metadata verified; freshness, hosted access and blocked-source clearance remain open.");
 }
 
 async function probeSources() {

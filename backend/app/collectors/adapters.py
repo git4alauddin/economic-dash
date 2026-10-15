@@ -46,5 +46,5 @@ class CatalogSourceAdapter:
 
 def create_adapters(client: CollectorHttpClient) -> dict[str, SourceAdapter]:
     """One adapter per selected source, shared across its dependent series."""
-    normalizer = SourceNormalizer()
+    normalizer = SourceNormalizer(registry=client.registry)
     return {source_id: CatalogSourceAdapter(source_id, client, normalizer) for source_id in client.registry.source_ids}

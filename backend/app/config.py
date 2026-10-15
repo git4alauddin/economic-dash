@@ -103,3 +103,32 @@ class CollectorSettings(BaseSettings):
         if self.attempt_timeout > self.total_timeout:
             raise ValueError("Attempt timeout cannot exceed total acquisition timeout.")
         return self
+
+
+class SchedulerSettings(BaseSettings):
+    """One lifespan owner; use a shared persistent directory on the production host."""
+
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_DIRECTORY / ".env", env_file_encoding="utf-8",
+        env_prefix="COLLECTOR_SCHEDULER_", extra="ignore", allow_inf_nan=False,
+    )
+
+    enabled: bool = True
+    state_directory: Path = BACKEND_DIRECTORY / ".runtime"
+    startup_delay: float = Field(default=1, ge=0, le=60)
+    tick_seconds: float = Field(default=30, gt=0, le=300)
+    run_timeout: float = Field(default=300, gt=0, le=1800)
+    shutdown_timeout: float = Field(default=10, gt=0, le=60)
+    discovery_limit: int = Field(default=2, ge=1, le=4)
+
+    @field_validator("state_directory")
+    @classmethod
+    def absolute_directory(cls, value: Path) -> Path:
+        return value.expanduser().resolve()
+
+
+def get_scheduler_settings(app_env: str) -> SchedulerSettings:
+    settings = SchedulerSettings()
+    if app_env == "production" and "state_directory" not in settings.model_fields_set:
+        settings = SchedulerSettings(state_directory=Path("/var/data/economic-dash"))
+    return settings

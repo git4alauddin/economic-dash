@@ -27,6 +27,7 @@ __pycache__/
 .ruff_cache/
 
 # Local database files, logs and test reports
+.runtime/
 *.db
 *.db-journal
 *.db-wal

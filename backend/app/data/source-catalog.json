@@ -5,12 +5,18 @@
   "status": "assessed_with_blockers",
   "collection_implemented": false,
   "history_stage": "M3.5",
+  "release_index": {
+    "url": "https://www.pib.gov.in/AllRelease.aspx?lang=1&reg=3",
+    "access": "verified_local",
+    "reuse_id": "pib",
+    "scope": "Current English release index only; absence is not proof that no newer release exists. No POST archive crawl or arbitrary external links. Validate ministry/title/period/base/category in each candidate release."
+  },
   "rules": {
     "selection": "Prefer NSE for the required observation when acquisition and reuse are usable. The fallbacks below are explicit choices, not claims that NSE publishes no macro data.",
     "missing": "Blocked requirements return null/unavailable with their reason_code. No sample values, synthetic substitutions, guessed dates or automatic source switching.",
     "release_discovery": "Concrete release URLs below are verified starting points, not permanent latest URLs. Discover newer releases from official indexes; validate title, period and revision before replacing a source URL.",
     "history": "M3.5 uses the reviewed bounded history_releases below. Five-period chart windows keep explicit gaps; older CPI revisions retain their trace. India GDP has two comparable FY points; April expenditure fails component reconciliation. Additional/latest release discovery and durable retention remain downstream work.",
-    "freshness": "Collector polling and stale thresholds are pending M3.6; preserve source observation precision, publication time when known, and separate retrieval/check times.",
+    "freshness": "M3.6 defines source-specific polling in refresh_policy.py; polling is not a freshness guarantee. M3.7 owns stale thresholds; preserve observation precision, publication time and separate retrieval/check times.",
     "release_gate": "Recheck terms and hosted access before enabling a route. No publisher has been contacted and no subscription or permission has been obtained."
   },
   "reuse": {

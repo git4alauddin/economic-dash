@@ -85,6 +85,14 @@ class CollectorHttpClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    def register_discovered_release(self, source_id: str, url: str) -> str:
+        """Extend only the bounded, same-publisher release set after index discovery."""
+        registry, key = self.registry.with_discovered_release(source_id, url)
+        self.registry = registry
+        self._locks.setdefault(key, asyncio.Lock())
+        self._generation.setdefault(key, 0)
+        return key
+
     def acknowledge(self, result: FetchResult) -> bool:
         """Commit validators ONLY after the caller validates and accepts/stores data.
 

@@ -234,8 +234,8 @@ def expenditure(root, title: str):
 
 
 class SourceNormalizer:
-    def __init__(self):
-        self.registry = SourceRegistry.load()
+    def __init__(self, registry: SourceRegistry | None = None):
+        self.registry = registry if registry is not None else SourceRegistry.load()
         self.catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
         requirements = json.loads((CATALOG_PATH.parent / "indicator-requirements.json").read_text(encoding="utf-8"))
         self.publishers = requirements["publishers"]
@@ -274,7 +274,7 @@ class SourceNormalizer:
                 root, title, published = pib_release(bundle, ministry)
                 points = parser(root, title)
                 dataset_updated, more_pages = None, False
-            if resource_id != source_id and max(point.period.end for point in points).strftime("%Y-%m") != resource_id.rsplit(".", 1)[-1]:
+            if resource_id.startswith(f"{source_id}.history.") and max(point.period.end for point in points).strftime("%Y-%m") != resource_id.rsplit(".", 1)[-1]:
                 raise ParseError(source_id, "history_release_period_mismatch")
             profile = self.catalog["sources"][source_id]
             publisher = self.publishers[profile["publisher_id"]]

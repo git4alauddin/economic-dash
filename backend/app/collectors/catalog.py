@@ -1,12 +1,12 @@
 """Turn the reviewed source catalog into a closed acquisition allowlist."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .errors import AcquisitionError, ErrorCode
 
@@ -70,6 +70,11 @@ class SourceRegistry:
                 key = f"{source_id}.metadata"
                 resources[key] = SourceResource(key, validate_url(source["metadata_url"]), source["format"])
         blocked = frozenset(set(data["sources"]) - selected)
+        discovery = data.get("release_index")
+        if discovery and any(data["sources"][key].get("delivery_publisher_id") == "pib" for key in selected):
+            if data["reuse"]["pib"]["collection_allowed"] is not True or discovery["access"] != "verified_local":
+                raise ValueError("PIB discovery still has an access/reuse gate.")
+            resources["pib_release_index"] = SourceResource("pib_release_index", validate_url(discovery["url"]), "html")
         return cls(MappingProxyType(resources), blocked, tuple(sorted(selected)))
 
     def resolve(self, source_id: str) -> SourceResource:
@@ -83,4 +88,18 @@ class SourceRegistry:
         self.resolve(source_id)
         if source_id not in self.source_ids:
             raise ValueError("An observation source is required.")
-        return (source_id,) + tuple(sorted(key for key in self.resources if key.startswith(f"{source_id}.history.")))
+        return (source_id,) + tuple(sorted(key for key in self.resources if key.startswith((f"{source_id}.history.", f"{source_id}.release."))))
+
+    def with_discovered_release(self, source_id: str, url: str) -> tuple["SourceRegistry", str]:
+        self.resolve(source_id)
+        profile = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))["sources"].get(source_id, {})
+        parsed = urlsplit(validate_url(url))
+        query = parse_qs(parsed.query, strict_parsing=True)
+        if source_id not in self.source_ids or profile.get("delivery_publisher_id") != "pib" or parsed.hostname != "www.pib.gov.in" or parsed.path != "/PressReleasePage.aspx" or set(query) != {"PRID"} or len(query["PRID"]) != 1 or not re.fullmatch(r"\d{6,8}", query["PRID"][0], re.ASCII):
+            raise ValueError("Discovery may only add a PIB release to an already selected PIB source.")
+        key = f"{source_id}.release.{query['PRID'][0]}"
+        if len([k for k in self.resources if k.startswith(f"{source_id}.release.")]) >= 4 and key not in self.resources:
+            raise ValueError("Discovered release limit exceeded.")
+        resources = dict(self.resources)
+        resources[key] = SourceResource(key, url, "html")
+        return replace(self, resources=MappingProxyType(resources)), key
