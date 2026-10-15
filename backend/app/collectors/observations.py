@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 import re
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_serializer, field_validator, model_validator
 
 from .catalog import validate_url
 
@@ -140,7 +140,13 @@ class NormalizedObservation(ImmutableModel):
 
     @field_validator("value", mode="before")
     @classmethod
-    def exact_decimal(cls, value: object) -> Decimal | None:
+    def exact_decimal(cls, value: object, info: ValidationInfo) -> Decimal | None:
+        if info.mode == "json" and isinstance(value, str):
+            # Versioned storage JSON uses decimal strings; Python acquisition
+            # still requires Decimal and JSON numeric floats remain forbidden.
+            if not re.fullmatch(r"-?(?:0|[1-9]\d*)(?:\.\d+)?", value, re.ASCII):
+                raise ValueError("Storage values require canonical decimal strings or null.")
+            value = decimal_value(value)
         if value is not None and not isinstance(value, Decimal):
             raise ValueError("Normalized financial values must already be Decimal.")
         return decimal_value(value)

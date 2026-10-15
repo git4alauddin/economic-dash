@@ -48,6 +48,10 @@ class CachePlan:
     states: tuple[SourceState, ...]
     failures: tuple[SourceFailure, ...]
     run_id: str
+    source_ids: tuple[str, ...] = ()
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    trigger: str = "unspecified"
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,45 @@ class SnapshotCache:
         self._candidates: tuple[NormalizedObservation, ...] = ()
         self._states: dict[str, SourceState] = {}
         self._failures: dict[str, tuple[SourceFailure, ...]] = {}
+
+    def _commit(self, plan: CachePlan) -> None:
+        if self.before_commit:
+            try:
+                result = self.before_commit(plan)
+                if inspect.isawaitable(result):
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise TypeError("The M4 transaction hook must be synchronous.")
+            except Exception as error:
+                raise CacheCommitError("Snapshot acceptance failed.") from error
+
+    @classmethod
+    def from_plan(cls, plan: CachePlan) -> "SnapshotCache":
+        """Reload a validated M4 checkpoint without committing or fetching again."""
+        cache = cls()
+        if plan.finished_at is None:
+            raise ValueError("Checkpoint timestamp is required.")
+        for key, entry in plan.resources.items():
+            # Acceptance follows parsing/transaction work; it can be later than
+            # the HTTP check. A later revalidation can reverse that ordering.
+            if key != entry.resource_id or entry.accepted_at > plan.finished_at or entry.checked_at > plan.finished_at or any(r.body is not None for r in entry.receipts):
+                raise ValueError("Invalid accepted-resource checkpoint.")
+            reason = cache._check(ResourceCheck(key, entry.batch, entry.receipts, entry.checked_at), plan.finished_at)
+            if reason:
+                raise ValueError(reason)
+        points = _bounded(plan.candidates)
+        if len(points) != len(plan.candidates):
+            raise ValueError("Checkpoint exceeds bounded observation/revision limits.")
+        groups = defaultdict(list)
+        for point in points:
+            groups[point.series_id, point.observation_period.id].append(point)
+        if any(_resolve(candidates)[2] for candidates in groups.values()):
+            raise ValueError("Checkpoint contains unresolved revisions.")
+        build_history(_batches(points))
+        cache._resources, cache._candidates = dict(plan.resources), points
+        cache._states = {state.source_id: state for state in plan.states}
+        cache._failures = {source: tuple(f for f in plan.failures if f.source_id == source) for source in cache._states}
+        return cache
 
     def get(self, resource_id: str) -> AcceptedResource | None:
         return self._resources.get(resource_id)
@@ -150,7 +193,7 @@ class SnapshotCache:
             return "missing_refresh_retained"
         return None
 
-    def accept(self, collection: HistoryCollection, sources: tuple[str, ...], *, run_id: str, started: datetime, finished: datetime) -> Acceptance:
+    def accept(self, collection: HistoryCollection, sources: tuple[str, ...], *, run_id: str, started: datetime, finished: datetime, trigger: str = "unspecified") -> Acceptance:
         if started.utcoffset() != timedelta(0) or finished.utcoffset() != timedelta(0) or finished < started:
             raise ValueError("Cache acceptance requires ordered UTC run times.")
         if len({c.resource_id for c in collection.checks}) != len(collection.checks):
@@ -219,26 +262,34 @@ class SnapshotCache:
                                          last_failure_at=finished if errors else old.last_failure_at,
                                          failure_reason=critical[0].reason_code if critical else (None if success else old.failure_reason))
             failure_map[source] = errors
-        plan = CachePlan(MappingProxyType(resources), points, tuple(states.values()), tuple(f for errors in failure_map.values() for f in errors), run_id)
-        if self.before_commit:
-            try:
-                result = self.before_commit(plan)
-                if inspect.isawaitable(result):
-                    if inspect.iscoroutine(result):
-                        result.close()
-                    raise TypeError("The M4 transaction hook must be synchronous.")
-            except Exception as error:
-                raise CacheCommitError("Snapshot acceptance failed.") from error
+        plan = CachePlan(MappingProxyType(resources), points, tuple(states.values()), tuple(f for errors in failure_map.values() for f in errors), run_id, sources, started, finished, trigger)
+        self._commit(plan)
         self._resources, self._candidates, self._states, self._failures = resources, points, states, failure_map
         return Acceptance(tuple(safe), tuple(failures), sum(changed_by_source.values()), sum(unchanged_by_source.values()))
 
-    def record_failure(self, sources: tuple[str, ...], *, run_id: str, started: datetime, finished: datetime, reason: str) -> None:
+    def record_failure(self, sources: tuple[str, ...], *, run_id: str, started: datetime, finished: datetime, reason: str, trigger: str = "unspecified") -> bool:
+        if started.utcoffset() != timedelta(0) or finished.utcoffset() != timedelta(0) or finished < started:
+            raise ValueError("Failure events require ordered UTC run times.")
+        if not sources or len(set(sources)) != len(sources) or any(source not in SourceRegistry.load().source_ids for source in sources):
+            raise ValueError("Failure events require unique, selected sources.")
+        states, failures = dict(self._states), dict(self._failures)
         for source in sources:
             old = self._states.get(source, SourceState(source_id=source))
             fields = old.model_dump() | dict(run_id=run_id, outcome="failed", last_attempt_at=started,
                                             last_checked_at=finished, last_failure_at=finished, failure_reason=reason)
-            self._states[source] = SourceState(**fields)
-            self._failures[source] = (SourceFailure(source_id=source, resource_id=source, reason_code=reason),)
+            states[source] = SourceState(**fields)
+            failures[source] = (SourceFailure(source_id=source, resource_id=source, reason_code=reason),)
+        plan = CachePlan(MappingProxyType(dict(self._resources)), self._candidates, tuple(states.values()),
+                         tuple(f for items in failures.values() for f in items), run_id, sources, started, finished, trigger)
+        try:
+            self._commit(plan)
+            committed = True
+        except CacheCommitError:
+            # DB failure cannot erase observations or leave runtime data labelled
+            # fresh. This metadata overlay is explicitly NOT a durable commit.
+            committed = False
+        self._states, self._failures = states, failures
+        return committed
 
     def collection(self) -> HistoryCollection:
         batches = _batches(self._candidates)

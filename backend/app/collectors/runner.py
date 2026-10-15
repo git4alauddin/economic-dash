@@ -14,6 +14,7 @@ from .adapters import create_adapters
 from .discovery import INDEX_ID, discover_releases
 from .errors import AcquisitionError
 from .history import HistoryCollection, ResourceCheck, SourceFailure, build_history
+from .handoff import CollectionRepository, RepositoryBridge
 from .http_client import CollectorHttpClient
 from .observations import ParseError
 from .process_lock import ProcessLock
@@ -110,10 +111,14 @@ class CollectionRunner:
         collect: Callable[..., Awaitable[HistoryCollection]] = collect_sources,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         cache: SnapshotCache | None = None,
+        repository: CollectionRepository | None = None,
     ):
         self.settings, self.client_factory, self.collect, self.now = settings, client_factory, collect, now
         self._active = asyncio.Lock()
-        self.cache = cache if cache is not None else SnapshotCache()
+        if cache is not None and repository is not None:
+            raise ValueError("Choose an existing cache or a repository checkpoint, not both.")
+        self.repository_bridge = RepositoryBridge(repository) if repository is not None else None
+        self.cache = self.repository_bridge.open_cache() if self.repository_bridge else (cache if cache is not None else SnapshotCache())
         self.last_run: RunSummary | None = None
         # A bounded in-memory handoff for M3.7/M4, never a public API snapshot.
         self.prepared: HistoryCollection | None = None
@@ -126,8 +131,12 @@ class CollectionRunner:
             raise ValueError("Refresh requires unique, selected source IDs.")
         started = self.now()
         run_id = str(uuid4())
+        def persisted():
+            acknowledgement = self.repository_bridge.last_acknowledgement if self.repository_bridge else None
+            return acknowledgement is not None and acknowledgement.run_id == run_id
         def summary(status, **fields):
-            return RunSummary(run_id, trigger, sources, status, started, self.now(), **fields)
+            return RunSummary(run_id, trigger, sources, status, started, self.now(), persisted=persisted(),
+                              cache_scope="repository_checkpoint" if self.repository_bridge else "process_memory", **fields)
         lock = ProcessLock(self.settings.state_directory / "collection.lock")
         if self._active.locked() or not lock.acquire():
             result = summary("skipped_busy", reason_code="collection_already_running")
@@ -140,7 +149,7 @@ class CollectionRunner:
                     async with asyncio.timeout(self.settings.run_timeout):
                         async with self.client_factory() as client:
                             collection = await self.collect(client, sources, history=history, discovery_limit=self.settings.discovery_limit, cache=self.cache)
-                            acceptance = self.cache.accept(collection, sources, run_id=run_id, started=started, finished=self.now())
+                            acceptance = self.cache.accept(collection, sources, run_id=run_id, started=started, finished=self.now(), trigger=trigger)
                             for check in acceptance.checks:
                                 for receipt in check.receipts:
                                     if receipt.outcome == "modified":
@@ -156,7 +165,7 @@ class CollectionRunner:
                 except TimeoutError:
                     result = summary("timeout", reason_code="collection_deadline_exceeded")
                 except asyncio.CancelledError:
-                    self.cache.record_failure(sources, run_id=run_id, started=started, finished=self.now(), reason="collection_cancelled")
+                    self.cache.record_failure(sources, run_id=run_id, started=started, finished=self.now(), reason="collection_cancelled", trigger=trigger)
                     self.last_run = summary("cancelled", reason_code="collection_cancelled")
                     event("run_finished", **asdict(self.last_run))
                     raise
@@ -165,8 +174,9 @@ class CollectionRunner:
                     result = summary("failed", reason_code="snapshot_acceptance_failed" if isinstance(error, CacheCommitError) else "collection_internal_error")
                     event("run_error", run_id=run_id, error_type=type(error).__name__)
                 if result.status in {"failed", "timeout"} and not result.failures:
-                    self.cache.record_failure(sources, run_id=run_id, started=started, finished=self.now(), reason=result.reason_code)
+                    self.cache.record_failure(sources, run_id=run_id, started=started, finished=self.now(), reason=result.reason_code, trigger=trigger)
                     self.prepared = self.cache.collection()
+                    result = replace(result, persisted=persisted())
                 self.last_run = result
                 event("run_finished", **asdict(result))
                 return result
