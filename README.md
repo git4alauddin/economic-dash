@@ -14,6 +14,11 @@ M1.4–M1.6 document the production feasibility baseline, shared contracts and f
 indicator handoff. M1.6 rechecked local HTTP/CORS behavior; source locking and the
 authentic data pipeline remain downstream work.
 
+M1.7 records the architecture handoff and change policy below. The shared baseline
+is frozen for implementation; overall M1 acceptance remains conditional on the
+open design/source gates. Hosting decisions have feasibility evidence, with live
+verification assigned to M7.
+
 Dashboard panels, authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
@@ -96,6 +101,29 @@ record progress separately; evaluator-facing instructions belong in this reposit
 - React components use PascalCase filenames; the browser entrypoint is `main.tsx`.
 - Python modules and functions use `snake_case`; the API entrypoint is `app/main.py`.
 - Commit titles follow `m<module>.f<feature>.<snake_case_name>`.
+
+## Tooling and repository decisions — ADR-01/02
+
+**ADR-01 — tooling.** Use React with TypeScript, Vite and npm, plus Python,
+FastAPI and uv-managed pinned requirements. React/FastAPI are assignment
+requirements; TypeScript provides checked frontend contracts and Vite supplies
+the existing development/build workflow. Plain JavaScript and a larger frontend
+framework were alternatives; another Python package manager was also possible.
+The selected stack keeps the current application small and reproducible.
+Runtime pins and installation commands are below. M1.3 verified fresh installs,
+builds, configuration tests and independent service startup; M7 must reproduce
+the build on its hosts. M2 owns later chart-library selection; M3–M5 own justified
+backend dependencies and their pinned updates.
+
+**ADR-02 — repository.** Use one repository with distinct `frontend/` and
+`backend/` trees, explicit ownership, `.editorconfig`, reviewed environment
+templates and generated/secret files ignored. Separate repositories and a
+repository `docs/` tree were alternatives. The monorepo coordinates interface
+changes; the user explicitly chose root README documentation and private planning
+and implementation logs outside Git. This supersedes the planners' proposed
+`docs/` layout. M1.2 and its documentation-layout checkpoint verified the tracked
+tree and ignore rules. Each module updates its README contract/setup details and
+the private log; M7 owns final delivery documentation.
 
 ## Production topology — M1.4 feasibility baseline
 
@@ -492,6 +520,92 @@ module planners. Source availability, exact Figma-derived catalog additions and
 live security/behavior remain explicitly unverified until their owning modules
 produce evidence. OpenAPI/consumer tests must confirm the final implementation;
 do not treat the conceptual examples above as working endpoints or real figures.
+
+## Architecture freeze and module handoff — M1.7
+
+This review uses the assignment, master/module planners and M1.2–M1.6 evidence.
+It freezes the **interface baseline**, not unfinished functionality. The execution
+agent reviewed the module boundaries; no separate module sign-offs, deployed
+security results or completed authentic-data pipeline are claimed.
+
+### ADR status register
+
+| Decision | Baseline and owner | Evidence/status at handoff |
+| --- | --- | --- |
+| ADR-01 | TypeScript/Vite/npm; Python/FastAPI/uv — M1, then module maintainers | Implemented and locally verified in M1.3; hosted build pending M7 |
+| ADR-02 | Monorepo, frontend/backend boundaries, README plus external private logs — M1/all modules | Implemented and checkpointed in M1.2; user documentation override recorded |
+| ADR-03 | Backend-private SQLite on persistent API disk — M4/M7 | Design selected; live persistence/isolation pending |
+| ADR-04 | Separate Vercel/Render HTTPS deployments — M7 | Feasibility baseline; funding/account/host verification pending |
+| ADR-05 | One lifespan-owned collector, one instance/worker — M3/M7 | Design selected; scheduler/restart evidence pending |
+| ADR-06 | Authenticated visible-tab polling every 60 seconds — M4/M6, session integration M5 | Interface selected; client/API integration tests pending |
+| ADR-07 | Protected data routes, memory bearer session, public login/health — M5 | Interface selected; authentication and negative tests pending |
+| ADR-08 | Versioned envelopes, decimal strings, provenance/period/state semantics — M3/M4/M2 | Interface selected; executable models and consumer tests pending |
+
+### M1 acceptance evidence
+
+| Planner condition | Review result and evidence |
+| --- | --- |
+| Requirements owned; design access explicit | Assignment rechecked; module ownership below covers all obligations. User can access Figma and supplied a PNG; exact agent measurements/interactions remain open under R1. |
+| React starts after clean install | Verified M1.3: `npm ci`, production build and browser ready state. |
+| FastAPI starts after clean install; smoke route works | Verified M1.3 pinned install and service startup; M1.6 root smoke check passed. Final `/health` belongs to M4. |
+| API URL configurable | Verified M1.3 alternate environment-only build; no source edit needed. |
+| Restrictive CORS principle | M1.3 configuration tests and M1.6 allowed-origin check; actual production-origin test pending M5/M7. |
+| Known environment names and safe templates | Current variable table and `.env.example` files reviewed in M1.3; future JWT/database settings added by their owners when implemented. No real credentials are required for the scaffold. |
+| Separate HTTPS hosting viable | M1.4 provider feasibility and configuration recorded; live checks pending M7. |
+| Private DB and persistence semantics understood | ADR-03 specifies backend-only disk storage; M4/M5/M7 must prove isolation and restart/redeploy persistence. |
+| Server-side scheduler supported | ADR-05 has a feasible single-process design; M3/M7 must demonstrate actual scheduled runs. |
+| Update delivery/cadence assigned | ADR-06 defines polling independently of M3 collection; M4/M6 implement and verify transport behavior. |
+| Source/date/unit/error/stale contracts written | M1.5 specifies metadata, null versus zero, retention and failure rules. |
+| First authentic slice has explicit handoffs | M1.6 queues `gdp_growth_world` through M3 → M4 → M2, with M5/M6/M7 integration roles; source lock remains R2. |
+| ADRs and risks reviewed | ADR-01–08 registered here; unresolved dependencies have owners and resolution paths below. |
+
+The M1.7 review artifact is complete. **Overall M1 is not yet fully verified or
+locked:** precise design extraction and first-source approval remain open. Live
+deployment checks are deliberately later-module evidence, not local test results.
+
+### Open gates and resolution paths
+
+| ID | Dependency/risk and effect | Owner and resolution/escalation |
+| --- | --- | --- |
+| R1 | Exact Figma tokens, control behavior and ambiguous labels are unverified by the agent. | M2 starts its design audit using the user-provided PNG as authorized reference; obtain Figma measurements/annotations or focused user clarification for unknowns. Record provisional choices; do not claim final visual parity until M2/M6 verify them. |
+| R2 | World GDP candidate is reachable but NSE coverage, semantic match and annual period definition are not locked. | M3 audits NSE and the candidate before ingestion; records a justified fallback or selects another real first series. M2/M4 receive catalog/definition changes explicitly. No fabricated substitute observations. |
+| R3 | Paid backend/disk budget, provider accounts and frontend-plan eligibility remain unconfirmed. | M7 checks current plans and account access before provisioning; obtain the user's spending approval then. If unsuitable, revise ADR-03/04/05 together before deploying storage or scheduler. |
+| R4 | Upstream endpoints may reject cloud-host requests. | M3/M7 probe actual endpoints from the selected API host early; document failures and evaluate another compliant source/host. Local HTTP success does not resolve this gate. |
+| R5 | Hosted runtime compatibility, DB isolation/persistence and single scheduler ownership are unproven. | M4/M5/M7 run the deployment checklist; M3 verifies scheduler recovery/overlap. Failed persistence or privacy checks block production acceptance and require a topology correction. |
+| R6 | Illustrated planner payloads, source semantics or future model choices could diverge across modules. | M2–M5 use the M1.5 baseline; resolve discrepancies through the change policy below before dependent code proceeds. M6 checks actual API/consumer compatibility. |
+
+### Implementation queue and directory ownership
+
+These are sequential workstreams in this collaboration, with dependency ordering;
+the table does not claim that other agents or deployments have been started.
+
+| Module | Safe starting work and handoff required before completion |
+| --- | --- |
+| M2 — `frontend/src/` | Begin design audit/component map; resolve R1 and give M3/M4 the actual series/control definitions. UI fixtures remain clearly marked and outside production observations. |
+| M3 — future backend collector modules | Begin source register and R2 audit; pass validated records/run events to M4 using M1.5. Confirm source-specific refresh rules and R4 before hosted collection. |
+| M4 — `backend/app/`, migrations and backend tests | Implement private schema/ingest/read/health boundaries; finalize models with M3 and consumers with M2. Wire M5 guards before protected data is made available to evaluators. |
+| M5 — backend auth plus frontend session UI | Implement the agreed token/session contract with M4 identity persistence, route guards and safe evaluator provisioning. M4 owns common error handlers and migration mechanics. |
+| M6 — frontend/backend integration and QA | Bind the authenticated API adapter/polling to M2 views and verify the first slice, all states, controls, fidelity, accessibility and performance. Reuse the scaffold smoke commands. |
+| M7 — deployment configuration and README | Investigate R3/R4 early; provision only with required account/budget authorization. Verify separate HTTPS sites, strict CORS, health, private durable storage and evaluator access. |
+
+M7 also owns the submission repository/schema/README, live URLs, assumptions and
+fallback-source list, private evaluation instructions, portfolio/flagship project
+links with role/technology summaries, and the post-assessment demonstration and
+AI-use explanation. Those assignment obligations remain pending.
+
+### Change policy
+
+The baseline is identified as **`m1-baseline-1`**, carried by the M1.7 Git
+checkpoint once committed. `/api/v1` remains the API namespace; this baseline ID
+is a documentation revision, not another route prefix or a Git tag.
+
+For a changed route, required field/type, numeric/date meaning, auth rule or
+topology assumption: record the reason and affected ADR/contract in README;
+name the producer and consumers; update their implementation/verification and
+private log together. Additive optional fields can remain in v1. Breaking changes
+require an explicit coordinated contract revision or a new API version. An
+unresolved conflict pauses only its dependent work; unaffected tasks may proceed.
+Internal filenames/classes remain each module's choice within the directory map.
 
 ## Local setup
 
