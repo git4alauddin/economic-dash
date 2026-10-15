@@ -31,7 +31,7 @@ export function failDashboard(previous: DashboardSnapshot | null, kind: "network
     }));
     const old = previous.panels[id], chart = old.chart ? { ...old.chart,
       series: old.chart.series.map((series) => ({ ...series, values: series.values.map((value, index) => {
-        const point = entries[series.id]?.history.points.find((candidate) => candidate.observation_period.id === old.chart?.periods?.[index]?.id);
+        const point = entries[series.id]?.history.points.find((candidate) => candidate.observation_period?.id === old.chart?.periods?.[index]?.id);
         return point && mayRetain(point) ? value : null;
       }) })),
       references: observations[id].rbi_target?.latest.value !== null && observations[id].rbi_target?.latest.value !== undefined ? old.chart.references : [],

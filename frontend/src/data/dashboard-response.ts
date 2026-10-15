@@ -2,7 +2,7 @@ import type { IndicatorId } from "../dashboard-panels";
 import type { DatePrecision, DecimalValue, SourceReference, Unit } from "../ui/types";
 import type { DataStatus } from "./dashboard-contract";
 
-// Draft wire projection for M4 acceptance. Runtime input remains unknown until validated.
+// Public v1 wire projection. Runtime input remains unknown until validated.
 // dashboard-contract.ts contains the normalized result, with an AsOfDate object.
 export interface ResponsePeriod {
   id: string;
@@ -13,7 +13,7 @@ export interface ResponseObservation {
   value: DecimalValue;
   unit: Unit;
   definition_id: string;
-  observation_period: ResponsePeriod;
+  observation_period: ResponsePeriod | null;
   as_of: string | null;
   as_of_precision?: DatePrecision | null;
   as_of_kind?: "observation" | "period_end" | null;
@@ -38,7 +38,7 @@ export interface ResponseSeries {
   latest: ResponseObservation;
   comparison: ResponseComparison | null;
   history: { status: DataStatus; points: readonly ResponseObservation[]; truncated: boolean };
-  policy?: { applicable: boolean; valid_from: string; valid_to: string | null };
+  policy?: { applicable: boolean; valid_from: string; valid_to: string | null } | null;
 }
 export interface ResponseChart {
   periods: readonly ResponsePeriod[];

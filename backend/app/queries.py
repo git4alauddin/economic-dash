@@ -4,7 +4,7 @@ All panels in a dashboard share one read transaction. Queries never collect data
 write a checkpoint or require observations to remain in the bounded collector RAM.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 import json
 import re
@@ -14,6 +14,7 @@ from app.database import Database
 from app.repository import observation_from_row
 from app.collectors.catalog import CATALOG_PATH
 from app.collectors.handoff import catalog_fingerprint
+from app.collectors.freshness import SourceState
 from app.collectors.history import (
     Comparison, HistoricalSeries, HistorySlot, UnavailableRequirement,
     _periods, _reference_period, build_history, compare,
@@ -45,6 +46,9 @@ class SeriesRead:
     selected_period: ObservationPeriod | None
     latest_valid: NormalizedObservation | None
     comparison: Comparison  # Applies to latest_valid; chart gaps stay independent.
+    source_states: tuple[SourceState, ...] = ()
+    checkpoint_run_id: str | None = None
+    history_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,8 @@ class IndicatorRead:
     indicator_id: str
     series: tuple[SeriesRead, ...]
     summaries: tuple[SummaryRead, ...]
+    source_states: tuple[SourceState, ...] = ()
+    checkpoint_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,7 @@ class DashboardRead:
     checkpoint_run_id: str | None
     panels: tuple[IndicatorRead, ...]
     ticker: tuple[UnavailableRequirement, ...]
+    source_states: tuple[SourceState, ...] = ()
 
 
 def unavailable_comparison(reason: str) -> Comparison:
@@ -85,6 +92,11 @@ class DashboardQueries:
         self.fingerprint = catalog_fingerprint()
         self.panels = {p["indicator_id"]: p for p in self.inventory["panels"]}
         self.series_ids = {s["id"] for p in self.panels.values() for s in p["series"]}
+
+    @staticmethod
+    def _states(connection) -> tuple[SourceState, ...]:
+        return tuple(SourceState.model_validate_json(json.dumps(dict(row)))
+                     for row in connection.execute("SELECT * FROM source_states ORDER BY source_id"))
 
     @staticmethod
     def _options(window: int, now: datetime | None) -> datetime:
@@ -228,7 +240,9 @@ class DashboardQueries:
         fields.update(window=tuple(slots), latest=selected.get(anchor.id), status=status, reason_code=reason,
                       comparison=compare(selected.get(anchor.id), history.observations))
         history = HistoricalSeries(**fields)
-        return SeriesRead(history, anchor, latest_valid, compare(latest_valid, history.observations))
+        older_cutoff = (slots[0].period.start - timedelta(days=1)).isoformat()
+        truncated = any(self._latest_end(connection, dependency, older_cutoff) for dependency in dependencies)
+        return SeriesRead(history, anchor, latest_valid, compare(latest_valid, history.observations), history_truncated=truncated)
 
     def _selections(self, indicator: str, selections: Mapping[str, str] | None) -> dict[str, str]:
         if indicator not in self.panels:
@@ -263,22 +277,31 @@ class DashboardQueries:
             raise UnknownSeries(series_id)
         now = self._options(window, now)
         with self.database.connection() as connection:
-            self._begin(connection)
-            return self._series(connection, series_id, window, end_period_id, now)
+            version = self._begin(connection)
+            return replace(self._series(connection, series_id, window, end_period_id, now),
+                           source_states=self._states(connection), checkpoint_run_id=version)
 
     def indicator(self, indicator_id: str, *, window: int = 5, end_periods: Mapping[str, str] | None = None,
                   now: datetime | None = None) -> IndicatorRead:
         selections = self._selections(indicator_id, end_periods)
         now = self._options(window, now)
         with self.database.connection() as connection:
-            self._begin(connection)
-            return self._indicator(connection, indicator_id, window, selections, now)
+            version = self._begin(connection)
+            return replace(self._indicator(connection, indicator_id, window, selections, now),
+                           source_states=self._states(connection), checkpoint_run_id=version)
 
     def dashboard(self, *, window: int = 5, now: datetime | None = None) -> DashboardRead:
         now = self._options(window, now)
         with self.database.connection() as connection:
             version = self._begin(connection)
-            panels = tuple(self._indicator(connection, indicator, window, {}, now) for indicator in self.panels)
+            states = self._states(connection)
+            panels = tuple(replace(self._indicator(connection, indicator, window, {}, now), source_states=states,
+                                   checkpoint_run_id=version) for indicator in self.panels)
             ticker = tuple(UnavailableRequirement(requirement_id=q["instrument_id"], reason_code=self.catalog["requirements"][q["instrument_id"]]["reason_code"])
                            for q in self.inventory["ticker"]["instruments"])
-            return DashboardRead(version, panels, ticker)
+            return DashboardRead(version, panels, ticker, states)
+
+    def ticker_version(self) -> str | None:
+        """Current ticker is gated; read its committed version without querying macro history."""
+        with self.database.connection() as connection:
+            return self._begin(connection)

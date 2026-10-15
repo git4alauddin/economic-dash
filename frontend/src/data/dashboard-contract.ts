@@ -9,7 +9,7 @@ export interface Observation {
   value: DecimalValue;
   unit: Unit;
   definition_id: string;
-  observation_period: { id: string; label: string; basis: "calendar" | "fiscal" };
+  observation_period: { id: string; label: string; basis: "calendar" | "fiscal" } | null;
   as_of: AsOfDate | null;
   sources: readonly SourceReference[];
   status: DataStatus;

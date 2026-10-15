@@ -1,4 +1,4 @@
-"""Application entrypoint; indicator routes are added in later modules."""
+"""FastAPI bootstrap, protected v1 read routes and collector lifespan."""
 
 from contextlib import asynccontextmanager
 import asyncio
@@ -11,6 +11,7 @@ from app.config import (DatabaseSettings, SchedulerSettings, Settings,
 from app.database import Database
 from app.repository import SQLiteCollectionRepository
 from app.queries import DashboardQueries
+from app.api import install_api
 from app.collectors.runner import CollectionRunner, configure_logging
 from app.collectors.scheduler import CollectorScheduler
 
@@ -45,6 +46,7 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
             await scheduler.stop()
 
     application = FastAPI(title="Economic Indicators API", version="0.1.0", lifespan=lifespan)
+    install_api(application)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,

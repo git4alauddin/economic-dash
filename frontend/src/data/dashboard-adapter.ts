@@ -40,7 +40,7 @@ function chartModel(raw: unknown, entries: Readonly<Record<string, ApiSeries>>, 
       if (typeof item.basis !== "string" || !["calendar", "fiscal"].includes(item.basis)) throw new v.ContractError();
       return { id: v.text(item.id), label: v.text(item.label), basis: item.basis as "calendar" | "fiscal" };
     });
-    if (!periods.length || new Set(periods.map((period) => period.id)).size !== periods.length || periods.some((period) => period.basis !== periods[0].basis)) throw new v.ContractError();
+    if (!periods.length || new Set(periods.map((period) => period.id)).size !== periods.length || panelId !== "gdp_growth" && periods.some((period) => period.basis !== periods[0].basis)) throw new v.ContractError();
     const ticks = v.list(input.ticks, 20).map((value) => { const tick = v.decimal(value), number = toChartNumber(tick); if (tick === null || number === null || number < domain[0]! || number > domain[1]!) throw new v.ContractError(); return tick; });
     if (ticks.length < 2) throw new v.ContractError();
     const plots = panelBindings[panelId].series.filter((binding) => binding.id !== "rbi_target").map((binding) => {
@@ -48,8 +48,8 @@ function chartModel(raw: unknown, entries: Readonly<Record<string, ApiSeries>>, 
       const history = entries[binding.id]?.history;
       return { id: binding.id, label: entries[binding.id]?.name ?? binding.label, kind: binding.kind, color: binding.color,
         values: periods.map((period) => {
-          const point = history?.points.find((candidate) => candidate.observation_period.id === period.id);
-          return point && displayable(history!.status) && displayable(point.status) && point.observation_period.basis === period.basis && point.observation_period.label === period.label ? point.value : null;
+          const point = history?.points.find((candidate) => candidate.observation_period?.id === period.id);
+          return point && displayable(history!.status) && displayable(point.status) && point.observation_period?.basis === period.basis && point.observation_period.label === period.label ? point.value : null;
         }) };
     });
     const policy = entries.rbi_target;
@@ -83,7 +83,7 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
       return { id: definition.id, label: item?.name ?? definition.label, state: item?.latest.status ?? "unavailable",
         detail: item ? `${stateDetail(item.latest.status, item.latest.reason_code)} History: ${item.history.status}${item.history.truncated ? " · truncated" : ""}.${item.policy ? ` Policy validity: ${item.policy.valid_from} to ${item.policy.valid_to ?? "unspecified end"}.` : ""} ${(item.validationIssues ?? []).join(" ")}` : "No validated observation available.",
         sources: item ? mergeSources([item.latest, ...item.history.points]) : [], asOf: item?.latest.as_of ?? null,
-        precision: item?.precision, history: item?.history.points.map((point) => ({ period: point.observation_period.label, value: point.value, unit: point.unit })) };
+        precision: item?.precision, history: item?.history.points.map((point) => ({ period: point.observation_period?.label ?? "Period unavailable", value: point.value, unit: point.unit })) };
     }) };
 }
 
@@ -123,7 +123,7 @@ export function adaptDashboard(payload: unknown): DashboardSnapshot {
       if (!Object.hasOwn(entries, binding.id)) { issues.push(`${panel.id}/${binding.id}: unavailable`); continue; }
       try {
         const item = v.series(entries[binding.id], binding.unit);
-        if (binding.id === "rbi_target" && !item.policy?.applicable) throw new v.ContractError();
+        if (binding.id === "rbi_target" && item.latest.value !== null && !item.policy?.applicable) throw new v.ContractError();
         parsed[binding.id] = item;
         if (item.history.status === "error" || item.latest.value === null || !displayable(item.latest.status) || item.validationIssues?.length) issues.push(`${panel.id}/${binding.id}: partial`);
       } catch { issues.push(`${panel.id}/${binding.id}: invalid series`); }

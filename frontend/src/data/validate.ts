@@ -52,15 +52,15 @@ export function sources(value: unknown): SourceReference[] {
 export function observation(value: unknown, expectedUnit: Unit): Observation {
   const raw = record(value), observationUnit = unit(raw.unit);
   if (observationUnit !== expectedUnit) throw new ContractError();
-  const period = record(raw.observation_period);
-  if (typeof period.basis !== "string" || !["calendar", "fiscal"].includes(period.basis)) throw new ContractError();
+  const period = raw.observation_period === null ? null : record(raw.observation_period);
+  if (period && (typeof period.basis !== "string" || !["calendar", "fiscal"].includes(period.basis))) throw new ContractError();
   const result: Observation = {
     value: decimal(raw.value), unit: observationUnit, definition_id: text(raw.definition_id),
-    observation_period: { id: text(period.id), label: text(period.label), basis: period.basis as "calendar" | "fiscal" },
+    observation_period: period ? { id: text(period.id), label: text(period.label), basis: period.basis as "calendar" | "fiscal" } : null,
     as_of: asOf(raw), sources: sources(raw.sources), status: status(raw.status),
     reason_code: raw.reason_code === null ? null : text(raw.reason_code), retention_allowed: flag(raw.retention_allowed),
   };
-  if (result.value !== null && (!result.sources.length || !result.as_of || !["fresh", "stale"].includes(result.status))) throw new ContractError();
+  if (result.value !== null && (!result.sources.length || !result.as_of || !result.observation_period || !["fresh", "stale"].includes(result.status))) throw new ContractError();
   return result;
 }
 export function series(value: unknown, expectedUnit: Unit): ApiSeries {
@@ -69,7 +69,7 @@ export function series(value: unknown, expectedUnit: Unit): ApiSeries {
   let history: ApiSeries["history"] = { status: "error", points: [], truncated: false };
   try {
     const input = record(raw.history), points = list(input.points).map((point) => observation(point, expectedUnit));
-    if (new Set(points.map((point) => point.observation_period.id)).size !== points.length || points.some((point) => point.definition_id !== latest.definition_id)) throw new ContractError();
+    if (points.some((point) => point.observation_period === null) || new Set(points.map((point) => point.observation_period?.id)).size !== points.length || points.some((point) => point.definition_id !== latest.definition_id)) throw new ContractError();
     const historyStatus = status(input.status);
     if (!["fresh", "stale"].includes(historyStatus) && points.some((point) => point.value !== null)) throw new ContractError();
     history = { status: historyStatus, points, truncated: flag(input.truncated) };
@@ -77,12 +77,12 @@ export function series(value: unknown, expectedUnit: Unit): ApiSeries {
   let comparison: ApiSeries["comparison"] = null;
   try { if (raw.comparison !== null) {
     const item = record(raw.comparison), comparisonUnit = unit(item.unit);
-    const expected = ["percent_yoy", "percent", "percent_of_gdp"].includes(expectedUnit) ? "percentage_points" : expectedUnit;
-    if (comparisonUnit !== expected || item.verified !== true || typeof item.kind !== "string" || !["previous_period", "previous_year", "other_geography", "policy_reference"].includes(item.kind)) throw new ContractError();
+    const expected = ["percent_yoy", "percent", "percent_of_gdp"].includes(expectedUnit) ? ["percentage_points"] : [expectedUnit, "percent"];
+    if (!expected.includes(comparisonUnit) || item.verified !== true || typeof item.kind !== "string" || !["previous_period", "previous_year", "other_geography", "policy_reference"].includes(item.kind)) throw new ContractError();
     comparison = { value: decimal(item.value), unit: comparisonUnit, precision: precision(item.precision), reference_label: text(item.reference_label), kind: text(item.kind), reference_series_id: text(item.reference_series_id), reference_period_id: text(item.reference_period_id) };
   } } catch { validationIssues.push("Comparison failed validation."); }
   let policy: ApiSeries["policy"];
-  if (raw.policy !== undefined) {
+  if (raw.policy !== undefined && raw.policy !== null) {
     const input = record(raw.policy), from = text(input.valid_from), to = input.valid_to === null ? null : text(input.valid_to);
     if (formatDate(from, "day") === MISSING || to !== null && (formatDate(to, "day") === MISSING || to < from)) throw new ContractError();
     policy = { applicable: flag(input.applicable), valid_from: from, valid_to: to };
