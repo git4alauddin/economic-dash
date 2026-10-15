@@ -28,6 +28,11 @@ try {
   const MarketTicker = await component("MarketTicker");
   const ticker = await server.ssrLoadModule("/src/ui/ticker-model.ts");
   const { tickerFixture, tickerScenarios } = await server.ssrLoadModule("/src/preview/ticker-fixtures.ts");
+  const adapter = await server.ssrLoadModule("/src/data/dashboard-adapter.ts");
+  const state = await server.ssrLoadModule("/src/data/dashboard-state.ts");
+  const client = await server.ssrLoadModule("/src/data/dashboard-client.ts");
+  const { apiBaseUrl } = await server.ssrLoadModule("/src/config.ts");
+  const { dashboardFixture, responseFixture } = await server.ssrLoadModule("/src/preview/dashboard-fixtures.ts");
   const render = (type, props) => renderToStaticMarkup(createElement(type, props));
 
   await test("decimal display preserves values above Number's safe integer range", () => {
@@ -192,6 +197,141 @@ try {
     const missing = { ...tickerFixture, refreshing: true, items: tickerFixture.items.map((quote) => ({ ...quote, value: null })) };
     assert.equal(ticker.tickerStatus(missing), "NO DATA");
     assert.ok(render(MarketTicker, { model: tickerScenarios.empty }).includes("No instruments available"));
+  });
+  await test("adapter maps six canonical panels and preserves units/decimals and missing comparators", () => {
+    const raw = dashboardFixture(), snapshot = adapter.adaptDashboard(raw);
+    assert.equal(Object.keys(snapshot.panels).length, 6);
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].value, "7.1");
+    assert.equal(snapshot.panels.gst_collection.summaries[0].unit, "inr_crore");
+    assert.ok(render(panels.GstPanel, { data: snapshot.panels.gst_collection }).includes("(₹ crore)"));
+    assert.equal(snapshot.panels.debt_to_gdp.summaries[1].value, null);
+    assert.equal(snapshot.panels.inflation_india.chart.references[0].value, "4.5");
+    assert.equal(snapshot.ticker.items[0].changePoints, "0");
+    assert.equal(snapshot.panels.gdp_growth.asOf.precision, "year");
+    assert.equal(snapshot.generatedAt, raw.meta.generated_at);
+  });
+  await test("adapter rejects malformed envelopes and timestamps with safe errors", () => {
+    for (const raw of [null, [], { data: {} }, { ...dashboardFixture(), meta: { api_version: "v2" } }]) assert.throws(() => adapter.adaptDashboard(raw), /could not be validated/);
+    const raw = dashboardFixture(); raw.meta.generated_at = "2025-02-30T00:00:00Z";
+    assert.throws(() => adapter.adaptDashboard(raw));
+  });
+  await test("invalid independent series are quarantined while valid neighbors remain", () => {
+    for (const change of [(series) => { series.latest.value = 7; }, (series) => { series.latest.value = "NaN"; }, (series) => { series.latest.unit = "percent"; }, (series) => { series.latest.sources = []; }, (series) => { series.latest.as_of_precision = "day"; }, (series) => { series.latest.status = ["fresh"]; }, (series) => { series.latest.observation_period.basis = ["calendar"]; }, (series) => { series.latest.as_of_kind = ["observation"]; }]) {
+      const raw = dashboardFixture(); change(raw.data.panels.gdp_growth.series.gdp_growth_world);
+      const snapshot = adapter.adaptDashboard(raw);
+      assert.equal(snapshot.panels.gdp_growth.summaries[0].value, "7.1");
+      assert.equal(snapshot.panels.gdp_growth.summaries[1].value, null);
+      assert.equal(snapshot.partial, true);
+    }
+  });
+  await test("invalid histories and comparisons do not replace valid latest observations", () => {
+    const raw = dashboardFixture(), series = raw.data.panels.gdp_growth.series.gdp_growth_india;
+    series.history.points[0].value = "Infinity";
+    series.comparison = { value: "1", unit: "percent", precision: 2, reference_label: "unverified rate delta" };
+    const snapshot = adapter.adaptDashboard(raw);
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].value, "7.1");
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].comparison, undefined);
+    assert.equal(snapshot.observations.gdp_growth.gdp_growth_india.history.status, "error");
+    assert.deepEqual(snapshot.panels.gdp_growth.chart.series[0].values, [null, null, null, null, null]);
+    assert.equal(snapshot.panels.gdp_growth.chart.series[1].values[0], "6.1");
+  });
+  await test("canonical period alignment preserves gaps and does not zip mismatched histories", () => {
+    const raw = dashboardFixture(), history = raw.data.panels.gdp_growth.series.gdp_growth_india.history;
+    history.points.reverse();
+    const missing = history.points.find((point) => point.observation_period.id === "2023");
+    missing.value = null; missing.status = "unavailable";
+    const snapshot = adapter.adaptDashboard(raw);
+    assert.deepEqual(snapshot.panels.gdp_growth.chart.series[0].values, ["8.1", "6.2", null, "6.8", "7.1"]);
+    history.points[0].observation_period.basis = "fiscal";
+    assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.chart.series[0].values[4], null);
+  });
+  await test("aggregate date stays unknown when series dates differ and details retain original provenance", () => {
+    const raw = dashboardFixture(); raw.data.panels.gdp_growth.series.gdp_growth_world.latest.as_of = "2024";
+    const panel = adapter.adaptDashboard(raw).panels.gdp_growth;
+    assert.equal(panel.asOf, null);
+    assert.equal(panel.seriesDetails[1].asOf.value, "2024");
+    assert.ok(render(panels.GdpPanel, { data: panel }).includes("Series details"));
+    assert.ok(!render(panels.GdpPanel, { data: panel }).includes("2025-01-01"));
+  });
+  await test("only verified comparisons with explicit reference identity use supplied precision", () => {
+    const raw = dashboardFixture(), series = raw.data.panels.gdp_growth.series.gdp_growth_india;
+    series.precision = 3;
+    series.latest.value = "9007199254740993.125";
+    series.comparison = { value: "0.005", unit: "percentage_points", precision: 3, reference_label: "vs synthetic 2024", kind: "previous_year", reference_series_id: "gdp_growth_india", reference_period_id: "2024", verified: true };
+    const snapshot = adapter.adaptDashboard(raw);
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].value, "9007199254740993.125");
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].comparison.value, "0.005");
+    assert.equal(snapshot.panels.gdp_growth.summaries[0].precision, 3);
+    series.comparison.verified = false;
+    assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.summaries[0].comparison, undefined);
+  });
+  await test("unsafe sources and unverified policy applicability never become displayed values", () => {
+    const raw = dashboardFixture();
+    raw.data.panels.inflation_india.series.rbi_target.policy.applicable = false;
+    raw.data.panels.trade.series.imports.latest.sources[0].url = "javascript:alert(1)";
+    const snapshot = adapter.adaptDashboard(raw);
+    assert.deepEqual(snapshot.panels.inflation_india.chart.references, []);
+    assert.equal(snapshot.panels.inflation_india.summaries[1].value, null);
+    assert.equal(snapshot.panels.trade.summaries[1].value, null);
+  });
+  await test("empty/unavailable results show missing values without fallback fixture numbers", () => {
+    for (const name of ["empty", "unavailable"]) {
+      const snapshot = adapter.adaptDashboard(responseFixture(name));
+      for (const panel of Object.values(snapshot.panels)) assert.ok(panel.summaries.every((summary) => summary.value === null));
+      const html = render(panels.GdpPanel, { data: snapshot.panels.gdp_growth });
+      assert.ok(html.includes(name === "empty" ? "No observations" : "Data unavailable"));
+      assert.ok(!html.includes("7.10%"));
+    }
+  });
+  await test("refresh retention is checked per latest value, history point and quote without mutating cache", () => {
+    const raw = dashboardFixture();
+    raw.data.panels.gdp_growth.series.gdp_growth_world.latest.retention_allowed = false;
+    raw.data.panels.gdp_growth.series.gdp_growth_india.history.points[1].retention_allowed = false;
+    raw.data.ticker.items[0].retention_allowed = false;
+    const before = adapter.adaptDashboard(raw), failed = state.failDashboard(before, "network");
+    assert.equal(failed.snapshot.panels.gdp_growth.summaries[0].state, "stale");
+    assert.equal(failed.snapshot.panels.gdp_growth.summaries[0].value, "7.1");
+    assert.equal(failed.snapshot.panels.gdp_growth.summaries[1].value, null);
+    assert.equal(failed.snapshot.panels.gdp_growth.chart.series[0].values[1], null);
+    assert.equal(failed.snapshot.ticker.items[0].value, null);
+    assert.equal(before.panels.gdp_growth.summaries[1].value, "3.4");
+    assert.equal(state.failDashboard(failed.snapshot, "network").snapshot.panels.gdp_growth.summaries[1].value, null);
+    assert.equal(state.beginRefresh(before).snapshot.ticker.refreshing, true);
+  });
+  await test("no retention and auth failures cannot resurrect previous protected values", () => {
+    const previous = adapter.adaptDashboard(dashboardFixture(false));
+    const failed = state.failDashboard(previous, "invalid");
+    assert.ok(Object.values(failed.snapshot.panels).every((panel) => panel.summaries.every((summary) => summary.value === null)));
+    assert.equal(state.failDashboard(previous, "unauthorized").snapshot, null);
+    const raw = dashboardFixture(); raw.data.ticker.status = "error";
+    const masked = adapter.adaptDashboard(raw);
+    assert.equal(masked.ticker.items[0].value, null);
+    assert.equal(state.failDashboard(masked, "network").snapshot.ticker.items[0].value, null);
+  });
+  await test("client sends only the configured backend request with an in-memory bearer token", async () => {
+    let calls = 0;
+    const result = await client.loadDashboard(null, new AbortController().signal, "synthetic-test-token", async (url, options) => {
+      calls++; assert.equal(url, `${apiBaseUrl}/api/v1/dashboard`);
+      assert.equal(options.headers.Authorization, "Bearer synthetic-test-token");
+      assert.equal(options.credentials, "omit"); assert.equal(options.redirect, "error"); assert.equal(options.cache, "no-store");
+      return new Response(JSON.stringify(dashboardFixture()));
+    });
+    assert.equal(calls, 1); assert.equal(result.phase, "ready");
+    assert.equal((await client.loadDashboard(null, new AbortController().signal, "", async () => { throw new Error("must not send"); })).phase, "error");
+  });
+  await test("client classifies HTTP/JSON failures safely and clears cached data for unauthorized reads", async () => {
+    const previous = adapter.adaptDashboard(dashboardFixture());
+    const failed = await client.loadDashboard(previous, new AbortController().signal, "test", async () => new Response(null, { status: 503 }));
+    assert.equal(failed.snapshot.panels.gdp_growth.summaries[0].state, "stale");
+    const invalid = await client.loadDashboard(null, new AbortController().signal, "test", async () => new Response("<secret-error-page>"));
+    assert.equal(invalid.snapshot, null); assert.ok(!invalid.message.includes("secret"));
+    for (const status of [401, 403]) assert.equal((await client.loadDashboard(previous, new AbortController().signal, "test", async () => new Response(null, { status }))).snapshot, null);
+  });
+  await test("canceled responses cannot overwrite state, and observation age alone does not imply stale", async () => {
+    const controller = new AbortController();
+    await assert.rejects(client.loadDashboard(null, controller.signal, "test", async () => { controller.abort(); return new Response(JSON.stringify(dashboardFixture())); }), { name: "AbortError" });
+    const raw = dashboardFixture(); raw.meta.generated_at = "2030-01-01T00:00:00Z";
+    assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.summaries[0].state, "fresh");
   });
 } finally {
   await server.close();

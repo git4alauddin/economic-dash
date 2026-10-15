@@ -9,16 +9,17 @@ const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   if (!["--url", "--output", "--browser", "--mode"].includes(key) || !process.argv[index + 1]) {
-    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels|ticker.");
+    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels|ticker|states.");
   }
   options.set(key, process.argv[index + 1]);
 }
 const mode = options.get("--mode") ?? "dashboard";
-if (!["dashboard", "primitives", "panels", "ticker"].includes(mode)) throw new Error("Unknown verification mode.");
+if (!["dashboard", "primitives", "panels", "ticker", "states"].includes(mode)) throw new Error("Unknown verification mode.");
 const targetUrl = new URL(options.get("--url") ?? "http://127.0.0.1:5173/");
 if (mode === "primitives" && targetUrl.pathname === "/") targetUrl.pathname = "/__ui-preview";
 if (mode === "panels" && targetUrl.pathname === "/") targetUrl.pathname = "/__panel-preview";
 if (mode === "ticker" && targetUrl.pathname === "/") targetUrl.pathname = "/__ticker-preview";
+if (mode === "states" && targetUrl.pathname === "/") targetUrl.pathname = "/__states-preview";
 const url = targetUrl.href;
 const cache = join(frontendRoot, "node_modules/.cache/layout-check");
 const output = resolve(options.get("--output") ?? join(cache, mode === "dashboard" ? "results" : mode));
@@ -205,8 +206,16 @@ try {
         if (!measurements.sourceLink) issues.push("Source link keyboard activation failed");
         await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
       }
+      if (mode === "states") {
+        measurements.states = await inspectStates(command, evaluate, async (name) => {
+          const capture = await command("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: viewport.width, height: viewport.height, scale: 1 }, captureBeyondViewport: true });
+          await writeFile(join(output, `${viewport.name}-${name}.png`), Buffer.from(capture.data, "base64"));
+        });
+        if (Object.values(measurements.states).some((passed) => passed !== true)) issues.push("State/retention/metadata check failed");
+        if (fetchUrls.size) issues.push("Synthetic states must use the injected transport only");
+      }
     }
-    if (["dashboard", "panels"].includes(mode)) {
+    if (["dashboard", "panels", "states"].includes(mode)) {
       measurements.skipLink = await inspectSkipLink(command, evaluate, "#dashboard-main");
       if (!measurements.skipLink) issues.push("Skip link keyboard activation failed");
       await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
@@ -230,6 +239,7 @@ try {
     report.viewports.push({ ...viewport, ...measurements, runtimeErrors: [...runtimeErrors], issues });
     console.log(`${issues.length ? "FAIL" : "PASS"} ${viewport.name} ${viewport.width}x${viewport.height}: overflow=${Math.max(0, measurements.documentWidth - measurements.layoutWidth)}px, layoutShift=${measurements.layoutShiftScore}`);
   }
+  report.fetchUrls = [...fetchUrls];
   await writeFile(join(output, reportName), `${JSON.stringify(report, null, 2)}\n`);
   if (report.viewports.some((entry) => entry.issues.length)) throw new Error(`Layout checks failed. See ${join(output, reportName)}`);
   console.log(`Evidence: ${output}`);
@@ -486,5 +496,56 @@ async function inspectTickerInteractions(command, evaluate, capture) {
   const initialScroll = await evaluate("document.querySelector('.ticker-scroll').scrollLeft");
   await delay(200);
   checks.manualMotion = await evaluate(`document.querySelector('.ticker-scroll').scrollLeft === ${initialScroll} && !document.getAnimations().some((animation) => animation.playState === 'running') && getComputedStyle(document.querySelector('.ticker-scroll')).scrollBehavior === 'auto'`);
+  return checks;
+}
+
+async function inspectStates(command, evaluate, capture) {
+  const checks = {};
+  const select = async (name) => {
+    await evaluate(`(() => { const s = document.querySelector('.state-preview-control select'); s.value = ${JSON.stringify(name)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await delay(100);
+    const expected = ["error", "malformed", "unauthorized"].includes(name) ? "error" : name === "loading" ? "loading" : "ready";
+    let ready = false;
+    for (let retry = 0; retry < 80; retry++) {
+      ready = await evaluate(`document.querySelector('[data-states-preview]').dataset.scenario === ${JSON.stringify(name)} && document.querySelector('[data-states-preview]').dataset.viewPhase === ${JSON.stringify(expected)}`);
+      if (ready) break;
+      await delay(25);
+    }
+    if (!ready) throw new Error(`State preview did not settle: ${name}`);
+    await evaluate("window.scrollTo(0, 0)");
+  };
+  const baseline = await evaluate("[...document.querySelectorAll('[data-panel-id]')].map((p) => p.getBoundingClientRect().height)");
+  for (const name of ["fresh", "loading", "partial", "empty", "unavailable", "error", "retained", "no-retention", "mixed-retention", "malformed", "unauthorized"]) {
+    await select(name);
+    const result = await evaluate(`(() => {
+      const name = ${JSON.stringify(name)};
+      const panels = [...document.querySelectorAll('[data-panel-id]')];
+      const values = [...document.querySelectorAll('.panel-summaries .summary-number')].map((n) => n.textContent);
+      const nulls = ['loading','empty','unavailable','error','no-retention','malformed','unauthorized'].includes(name);
+      let correct = values.length === 12 && (!nulls || values.every((v) => v === '—'));
+      if (name === 'fresh') correct &&= values[0] === '7.10%' && values[1] === '3.40%' && values[3] === '—';
+      if (name === 'partial') correct &&= values[0] === '7.10%' && values[1] === '—' && values[4] !== '—';
+      if (name === 'retained') correct &&= values[0] === '7.10%' && document.querySelectorAll('.summary-state.state-stale').length === 11 && document.querySelector('.market-status').textContent === 'STALE';
+      if (name === 'mixed-retention') correct &&= values[0] === '7.10%' && values[1] === '—' && document.querySelector('.market-status').textContent === 'ERROR' && document.querySelector('[data-panel-id=gdp_growth] .chart-frame tbody tr:nth-child(2) td')?.textContent === '—';
+      if (['loading','empty','unavailable','error'].includes(name)) correct &&= document.querySelectorAll('.panel-plot-region [data-state=' + name + ']').length === 6;
+      if (name === 'malformed') correct &&= document.querySelector('main [role=alert]').textContent.includes('validate');
+      if (name === 'unauthorized') correct &&= document.querySelector('main [role=alert]').textContent.includes('Sign in');
+      const bounds = panels.every((panel) => panel.getBoundingClientRect().right <= document.documentElement.clientWidth && panel.scrollWidth <= panel.clientWidth + 1);
+      const stable = panels.every((panel, i) => Math.abs(panel.getBoundingClientRect().height - ${JSON.stringify(baseline)}[i]) < 1);
+      return { correct, bounds, stable, heights: panels.map((p) => p.getBoundingClientRect().height) };
+    })()`);
+    checks[name] = result.correct && result.bounds && result.stable;
+    if (!checks[name]) console.error("State diagnostic", name, result);
+    await capture(name);
+  }
+  await select("fresh");
+  await evaluate("document.querySelector('.panel-data-details summary').focus()");
+  await keyPress(command, "Enter");
+  checks.metadata = await evaluate("(() => { const d = document.querySelector('.panel-data-details'); const p = d.querySelector('.panel-data-popover'); const b = p.getBoundingClientRect(); return d.open && d.textContent.includes('Synthetic API examples') && d.textContent.includes('History: fresh') && b.x >= 0 && b.right <= document.documentElement.clientWidth && p.scrollWidth <= p.clientWidth + 1; })()");
+  await capture("series-details");
+  checks.metadataLink = await inspectSourceLink(command, evaluate, ".panel-data-popover .source-as-of a");
+  await keyPress(command, "Escape");
+  checks.metadataEscape = await evaluate("!document.querySelector('.panel-data-details').open && document.activeElement.matches('.panel-data-details summary')");
+  await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
   return checks;
 }

@@ -5,7 +5,7 @@ import PanelShell from "../PanelShell";
 import SummaryValue from "../ui/SummaryValue";
 import ComparisonChange from "../ui/ComparisonChange";
 import PeriodLabel from "../ui/PeriodLabel";
-import SourceAsOf from "../ui/SourceAsOf";
+import PanelMetadata from "./PanelMetadata";
 import Legend from "../charts/Legend";
 import PanelIcon, { type PanelIconKind } from "./PanelIcon";
 import PanelPlot, { type PanelKind } from "./PanelPlots";
@@ -27,16 +27,21 @@ function PanelContent({ recipe, data, state = "unavailable" }: PanelProps & { re
   const status = data?.state ?? state;
   const legendSeries = chart?.series.filter((series) => series.kind !== "total") ?? [];
   const legend = recipe.kind === "expenditure" ? [...legendSeries].reverse() : legendSeries;
-  return <PanelShell panel={dashboardPanels[recipe.index]}>
+  const panel = recipe.kind === "gst" && data?.summaries[0]?.unit === "inr_crore" ? { ...dashboardPanels[recipe.index], accentLabel: "(₹ crore)" } : dashboardPanels[recipe.index];
+  return <PanelShell panel={panel}>
     <div className={`indicator-content content-${recipe.kind}`} data-specialized-panel={recipe.kind}>
       <div className="panel-summaries">
-        {summaries.map((summary, index) => <SummaryValue key={index} {...summary} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement={recipe.index < 2 ? "inline" : "corner"}>
-          {summary.comparison && <ComparisonChange {...summary.comparison} />}
-        </SummaryValue>)}
+        {summaries.map((summary, index) => {
+          const state = summary.state ?? status, available = state === "fresh" || state === "stale";
+          return <SummaryValue key={index} {...summary} value={available ? summary.value : null} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement={recipe.index < 2 ? "inline" : "corner"}>
+            {available && summary.comparison && <ComparisonChange {...summary.comparison} />}
+            {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
+          </SummaryValue>;
+        })}
       </div>
       <div className="panel-chart-caption"><PeriodLabel label={data?.period.label ?? null} basis={data?.period.basis} /><Legend items={legend.map((series) => ({ id: series.id, label: series.label, color: series.color, kind: series.kind === "bar" ? "bar" : "line" }))} /></div>
-      <div className="panel-plot-region"><PanelPlot kind={recipe.kind} chart={chart} state={status} /></div>
-      <SourceAsOf sources={data?.sources ?? []} asOf={data?.asOf ?? null} />
+      <div className="panel-plot-region"><PanelPlot kind={recipe.kind} chart={chart} state={data?.chartState ?? status} /></div>
+      <PanelMetadata data={data} />
     </div>
   </PanelShell>;
 }

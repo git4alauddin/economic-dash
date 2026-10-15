@@ -36,6 +36,11 @@ M2.5 adds the typed market ticker, quote details, keyboard scrolling and explici
 availability/cadence states. Its development preview exercises synthetic quotes;
 production still has no market feed. The interaction choices are documented below.
 
+M2.6 adds response validation, the dashboard adapter, per-observation retention
+rules and a synthetic API-state preview. Additional wire fields are a documented
+M4 handoff proposal. Production still uses the bootstrap connection check until
+the authenticated dashboard endpoint is implemented and integrated.
+
 Authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
@@ -66,11 +71,12 @@ economic-dash/
       config.ts        Public API URL configuration
       dashboard-panels.ts  Stable panel IDs/titles; no observations
       components/      DashboardLayout, DashboardHeader, MarketTicker, PanelShell
+      data/            Draft response validation, dashboard adapter/client/state
         ui/            Values, comparisons, periods, states and source/as-of footer
         charts/        SVG chart frame, point tooltips and legend
         panels/        Six specialized panels, plots and original SVG icons
       ui/              Presentation types, ticker model, formatting, plot geometry
-      preview/         Development-only primitives/panel/ticker previews and fixtures
+      preview/         Development-only primitives/panel/ticker/API-state previews
       main.tsx         Browser entrypoint
       tokens.css       Shared provisional visual tokens
       styles.css       Shell, grid, surfaces and responsive layout
@@ -1034,6 +1040,149 @@ grid retains its measured geometry. Evidence defaults to ignored
 `ticker-report.json`; private review captures/logs stay outside the repository.
 Exact Figma behavior/fidelity, approved sources/cadence and authenticated backend
 updates remain open integration work. M2.5 does not complete the overall module.
+
+## Data adapter and failure states — M2.6
+
+The `frontend/src/data/` boundary validates unknown responses before creating
+presentation models. `DashboardScreen` renders that result through the existing
+six panels and ticker. The production app still checks the bootstrap route;
+the protected dashboard client is available for M4/M5/M6 integration and is not
+called by that bootstrap. No real data endpoint, login, collector or database is
+introduced by this checkpoint.
+
+### Draft M4 projection
+
+The established access paths remain `data.panels[indicator_id].series[series_id]`,
+`latest`, `comparison`, `history.points`, `data.ticker.items` and `meta`. The adapter
+checks the fields it consumes; M4 can supply additional ADR-08 traceability fields.
+The table below describes **proposed additional wire fields**, not an already
+implemented backend schema. M4 must accept or revise them with adapter tests.
+
+| Input | Fields used by the adapter |
+| --- | --- |
+| Envelope | `meta.api_version: "v1"`, valid UTC `generated_at`, nonempty opaque `version`, boolean `partial`; object `data.panels` |
+| Panel | `series` keyed by the agreed catalog; supplied `period_label`; optional validated `chart` projection |
+| Series | `name`, display `precision` (0–6), `latest`, nullable `comparison`, `history` with `status`, `points`, boolean `truncated` |
+| Observation | Decimal-string/null `value`; expected `unit`; `definition_id`; `observation_period` with canonical `id`, source-facing `label`, calendar/fiscal `basis`; `status`, nullable `reason_code`, boolean `retention_allowed`; source/as-of fields below |
+| Provenance | `sources: [{source_id, name, url, is_nse}]`; nullable `as_of` with `as_of_precision` and `as_of_kind` when present |
+| Comparison | Supplied `value`, compatible difference `unit`, `precision`, `reference_label`, `kind`, `reference_series_id`, `reference_period_id`, explicit `verified: true`; otherwise omitted |
+| Policy reference | RBI series additionally requires `policy.applicable: true`, valid day-precision `valid_from` and nullable `valid_to`; M3/M4 establish applicability and validity, the browser does not infer it from today's date |
+| Chart projection | Explicit ordered `periods: [{id,label,basis}]`, decimal-string `domain: [min,max]`, 2–20 decimal-string `ticks`, compatible `unit`, display `precision` and `annotation_precision` |
+| Ticker | `status`, `cadence` (`scheduled`, `delayed`, `unknown`), nullable `cadence_label`, `items` |
+| Quote | Observation fields plus `instrument_id`, `name`, `change`, `change_percent`, nullable `comparison_label`, `precision`, `market_status` (`open`, `closed`, `unknown`) |
+
+For example, this is the chart projection's structure, using illustrative axis
+settings and no financial observations:
+
+```json
+{
+  "unit": "percent_yoy",
+  "domain": ["0", "10"],
+  "ticks": ["0", "5", "10"],
+  "periods": [
+    {"id": "2024", "label": "2024", "basis": "calendar"},
+    {"id": "2025", "label": "2025", "basis": "calendar"}
+  ],
+  "precision": 2,
+  "annotation_precision": 1
+}
+```
+
+These bounds/order are supplied projection metadata. The adapter does not derive
+economic values, growth rates, policy targets, averages or totals. Local bindings
+choose the six existing panel roles, plot types and colors. GST level series use
+INR crore, including the panel heading; synthetic growth IDs from the older
+illustration preview are not silently accepted as the real GST catalog. The debt
+comparison stays unavailable until an approved catalog definition is supplied.
+
+### Validation and independent availability
+
+Non-null observations need a valid decimal string, matching unit, definition,
+period, source and date, and an explicit fresh/stale state. Numeric JSON values,
+NaN/infinity, invalid calendar dates, unsafe source URLs, unknown units and
+missing provenance fail validation. Large valid decimals remain strings for
+display; conversion to finite numbers is limited to chart geometry. Year/month
+dates retain their precision. Publication/retrieval/request times are never
+substituted for observation dates.
+
+Malformed envelope metadata fails the whole read safely. Invalid or missing
+series are isolated, preserving valid neighboring series/panels. Invalid history
+is unavailable independently of a valid latest value; an invalid comparison
+becomes missing. History points align by canonical period ID, label and basis,
+not by array position. Explicit null points remain gaps; mismatched/duplicate
+periods and invalid chart projections do not invent a replacement history.
+History windows are limited to 500 points; source arrays to 20 entries and
+instrument lists to 100. Unknown series are not mapped into a visible metric.
+
+Summary and chart availability are independent. Every supplied series has a
+keyboard-accessible **Series details** disclosure with original source, as-of
+date, latest/history state, safe explanatory text and truncation/policy validity
+where applicable. Enter/Space opens it; Escape closes and returns focus. The
+disclosure overlays the plot without moving the grid. If latest observation
+dates differ, the group date stays `—`; individual dates remain in the disclosure.
+An old annual observation can remain fresh according to the backend's release
+policy; the browser imposes no global age-based stale deadline.
+
+### Request and refresh behavior
+
+`readDashboard` requests only the configured backend's `/api/v1/dashboard`, with
+an in-memory bearer token supplied by M5. It omits cookies, disables browser
+caching, rejects redirects, uses a 15-second timeout and supports caller aborts.
+It bounds the decoded JSON text to 2,000,000 characters and exposes safe errors
+without echoing backend bodies or credentials. No persistent token/data storage,
+upstream URL, polling timer or hidden fallback constant is added.
+
+| Event | Presentation result |
+| --- | --- |
+| First request pending | Loading with missing values and reserved card space |
+| Valid response | Replace snapshot with validated current states, even when `version` is unchanged |
+| Partial response | Preserve independently valid content; mark missing/invalid series explicitly |
+| Supported history query with no observations | Empty state; missing values are not zero |
+| No usable observation/source | Unavailable state |
+| Refresh pending with a snapshot | Keep current validated content; show refresh-in-progress status |
+| Network/HTTP/validation failure | Check cached `retention_allowed` independently for each latest value, history point and quote; retain permitted values as stale, clear all other numeric fields |
+| 401/403 | Clear the display snapshot and require sign-in; M5 owns session-token clearing/navigation |
+| Caller abort | Reject the canceled read; it cannot commit a result into the preview state |
+
+Retention preserves original dates/sources and supplied comparisons; it never
+uses `generated_at` as a new observation timestamp. Denied values do not return
+on subsequent failures. This module supplies pure transition functions; M6 still
+owns live request ordering, single-flight polling and final integrated behavior.
+
+### State preview and verification
+
+With Vite running, visit `http://127.0.0.1:5173/__states-preview`. The clearly labeled
+preview starts with a synthetic validated snapshot, then exercises fresh, loading,
+partial, empty, unavailable, error, retained, no-retention, mixed-retention,
+malformed and unauthorized scenarios. Its injected transport returns synthetic
+HTTP/JSON outcomes through the same client/adapter; it does not contact a real
+protected endpoint or send a real token. Changing scenarios aborts the old read.
+The route and all API-state fixtures are development-only.
+
+```powershell
+npm run test:ui
+npm run verify:states
+npm run verify:panels
+npm run verify:ticker
+npm run verify:layout
+npm run build
+```
+
+All **36 tests** and the production build/type-check passed. **14 browser cases**
+passed: three state-matrix widths, three panel widths, four ticker/reduced-motion
+cases and four dashboard/API-failure cases. Each matrix case checks all eleven
+scenarios plus disclosure/source-link/Escape behavior. Target panels remain 529px
+high at row tops 158/710/1262, with stable heights across simulated states and no
+page horizontal overflow. Stale plot labels overlay rather than enlarging cards.
+Preview transports make no data fetches; actual bootstrap browser requests were
+recorded as configured-backend-only. Client tests assert the protected request URL
+and options. This is not a live authenticated endpoint test.
+
+Evidence defaults to ignored `node_modules/.cache/layout-check/states/`, including
+per-state captures and `states-report.json`; private evidence/logs stay outside
+Git. Distinctive fixtures and all four preview routes are excluded from production
+JS. M4 wire-schema acceptance, M3 semantics/source approval, M5 authentication,
+live polling/integration and exact Figma fidelity remain open. M2 is not locked.
 
 ## Local setup
 

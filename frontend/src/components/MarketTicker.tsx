@@ -62,6 +62,7 @@ export default function MarketTicker({ model = unavailableTicker }: { model?: Ti
       <div className="ticker-details-heading"><h2 id={`${id}-title`}>{active.label} details</h2><button type="button" className="ticker-close" onClick={() => { trigger()?.focus(); setSelected(null); }}>Close</button></div>
       <p>{quoteIsVisible(model, active) && formatDecimal(active.value, active.precision) !== MISSING ? (model.state === "stale" || active.state === "stale" ? "Stale quote · retained observation" : "Quote available") : model.state === "loading" || active.state === "loading" ? "Loading quote…" : model.state === "error" || active.state === "error" ? "Unable to load quote" : "Quote unavailable"}</p>
       <p>{model.cadenceLabel ?? "Update schedule unavailable"}{model.refreshing ? " · Refresh in progress" : ""}</p>
+      {active.detail && <p>{active.detail}</p>}
       <div className="ticker-comparisons">
         <span>Points <ComparisonChange value={quoteIsVisible(model, active) ? active.changePoints : null} unit="index_points" precision={active.precision} referenceLabel={active.comparisonLabel ?? "Comparison period unavailable"} /></span>
         <span>Percent <ComparisonChange value={quoteIsVisible(model, active) ? active.changePercent : null} unit="percent" precision={2} referenceLabel={active.comparisonLabel ?? "Comparison period unavailable"} /></span>

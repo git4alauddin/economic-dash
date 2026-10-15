@@ -13,6 +13,7 @@ export interface MarketQuote {
   precision: number;
   asOf: AsOfDate | null;
   sources: readonly SourceReference[];
+  detail?: string;
 }
 
 export interface TickerPresentation {

@@ -25,8 +25,23 @@
 .plot-annotation text { font-size: 15px; }
 .chart-point:focus > rect { stroke: white; stroke-width: 2; }
 .indicator-chart .chart-note { font-size: 11px; }
+.indicator-chart .chart-frame > .state-stale { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 1; padding: 1px 4px; border-radius: 3px; background: #081427f5; font-size: 10px; white-space: nowrap; }
 .panel-preview-notice { position: fixed; top: 3px; left: 8px; z-index: 4; padding: 3px 6px; border: 1px solid #bfa252; border-radius: 4px; background: #3c321aee; color: #ffe8a3; font-size: 9px; line-height: 1.2; }
 .panel-preview-notice > span { display: block; font-size: 9px; }
+.summary-state { display: block; font-size: 10px; color: var(--color-muted); }
+.summary-state.state-stale { color: #f4df8d; }
+.panel-provenance { position: relative; display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.panel-provenance > .source-as-of { flex: 1; }
+.indicator-content:has(.panel-data-details) { gap: 5px; }
+.panel-data-details { flex: 0 0 auto; font-size: 11px; color: #c0e4ef; }
+.panel-data-details > summary { cursor: pointer; padding: 2px; }
+.panel-data-popover { position: absolute; z-index: 5; bottom: calc(100% + 4px); left: 0; right: 0; max-height: 250px; overflow: auto; padding: 12px; border: 1px solid #547998; border-radius: 6px; background: #081a2f; box-shadow: 0 6px 20px #000b; line-height: 1.4; overflow-wrap: anywhere; }
+.panel-data-popover > p { color: #f4df8d; font-size: 12px; }
+.panel-data-popover section { margin-block: 10px; }
+.panel-data-popover h3 { font-size: 12px; margin-block: 4px; }
+.panel-data-popover section > p { margin-bottom: 6px; }
+.state-preview-control { position: fixed; z-index: 8; bottom: 8px; left: 8px; display: grid; gap: 4px; max-width: calc(100% - 16px); padding: 6px; border: 1px solid #bfa252; border-radius: 4px; background: #302713f5; color: #ffe8a3; font-size: 11px; }
+.state-preview-control select { color: white; background: #17314e; border: 1px solid #547998; min-height: 28px; max-width: 100%; }
 @media (max-width: 600px) {
   .panel-summaries { gap: 10px; }
   .panel-summaries .summary-value { padding-inline: 8px; min-height: 126px; }
