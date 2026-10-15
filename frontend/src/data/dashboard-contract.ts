@@ -2,7 +2,8 @@ import type { PanelPresentation, PlotSeries } from "../ui/panel-models";
 import type { TickerPresentation } from "../ui/ticker-model";
 import type { AsOfDate, DecimalValue, SourceReference, UiState, Unit } from "../ui/types";
 
-// M2.6 draft projection of ADR-08. M4 must accept/finalize these additional fields.
+// Validated/normalized models. Draft wire interfaces live in dashboard-response.ts.
+// M4 must accept/finalize the projection; these are not backend implementation claims.
 export type DataStatus = Exclude<UiState, "loading">;
 export interface Observation {
   value: DecimalValue;

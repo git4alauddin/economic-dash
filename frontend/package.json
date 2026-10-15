@@ -21,6 +21,7 @@
     "verify:audit": "node scripts/verify-layout.mjs --mode audit",
     "verify:performance": "node scripts/verify-layout.mjs --mode performance",
     "benchmark:ui": "node scripts/benchmark-ui.mjs",
+    "verify:handoff": "node scripts/verify-handoff.mjs",
     "test:ui": "node --test scripts/test-ui.mjs"
   },
   "dependencies": {

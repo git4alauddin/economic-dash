@@ -1,11 +1,12 @@
 import { dashboardPanels } from "../dashboard-panels";
 import { panelBindings, type DataStatus } from "../data/dashboard-contract";
 import type { Unit } from "../ui/types";
+import type { DashboardResponseV1Draft, ResponseObservation, ResponseQuote } from "../data/dashboard-response";
 import { panelFixtures } from "./panel-fixtures";
 
 // SYNTHETIC_API_STATE_FIXTURES_ONLY — proposed wire format, never real observations.
 export function dashboardFixture(retention = true) {
-  const observation = (value: string | null, unit: Unit, year = "2025") => ({
+  const observation = (value: string | null, unit: Unit, year = "2025"): ResponseObservation => ({
     value, unit, status: "fresh" as DataStatus, definition_id: `synthetic_${unit}`,
     observation_period: { id: year, label: year, basis: "calendar" as const },
     as_of: year, as_of_precision: "year", as_of_kind: "observation",
@@ -15,8 +16,8 @@ export function dashboardFixture(retention = true) {
   const panels = Object.fromEntries(dashboardPanels.map((panel, index) => {
     const binding = panelBindings[panel.id], chart = panelFixtures[index].chart!;
     return [panel.id, {
-      period_label: "2021–2025 · synthetic API", chart: { unit: binding.series[0].unit, domain: chart.domain.map(String), ticks: chart.ticks,
-        periods: chart.labels.map((label) => ({ id: label, label, basis: "calendar" })), precision: 2, annotation_precision: 1 },
+      period_label: "2021–2025 · synthetic API", chart: { unit: binding.series[0].unit, domain: [String(chart.domain[0]), String(chart.domain[1])] as const, ticks: chart.ticks,
+        periods: chart.labels.map((label) => ({ id: label, label, basis: "calendar" as const })), precision: 2, annotation_precision: 1 },
       series: Object.fromEntries(binding.series.map((definition, position) => {
         const original = chart.series[position], values = original?.values ?? chart.labels.map(() => "4.5");
         return [definition.id, { name: definition.label, precision: 2,
@@ -28,10 +29,10 @@ export function dashboardFixture(retention = true) {
     }];
   }));
   // Fixed bindings choose presentation roles; fixture values have no economic meaning.
-  const quote = { ...observation("81234.56", "index_points"), instrument_id: "synthetic_sensex", name: "SENSEX",
+  const quote: ResponseQuote = { ...observation("81234.56", "index_points"), unit: "index_points", instrument_id: "synthetic_sensex", name: "SENSEX",
     change: "0", change_percent: "0", comparison_label: "vs synthetic previous close", precision: 2, market_status: "closed" };
   return { data: { panels, ticker: { status: "fresh" as DataStatus, cadence: "scheduled", cadence_label: "Synthetic schedule: every 60 seconds", items: [quote] } },
-    meta: { api_version: "v1", generated_at: "2025-01-03T12:00:00Z", version: "synthetic_snapshot_1", partial: false } };
+    meta: { api_version: "v1", generated_at: "2025-01-03T12:00:00Z", version: "synthetic_snapshot_1", partial: false as boolean } } satisfies DashboardResponseV1Draft;
 }
 
 export const stateScenarioNames = ["fresh", "loading", "partial", "empty", "unavailable", "error", "retained", "no-retention", "mixed-retention", "malformed", "unauthorized", "dense"] as const;
