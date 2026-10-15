@@ -19,10 +19,11 @@ is frozen for implementation; overall M1 acceptance remains conditional on the
 open design/source gates. Hosting decisions have feasibility evidence, with live
 verification assigned to M7.
 
-M2.1 adds a provisional PNG-derived UI audit below. Exact Figma properties and
-interaction states remain unverified; dashboard implementation has not started.
+M2.1 adds a provisional PNG-derived UI audit below. M2.2 implements the styled
+header, unavailable-data ticker and six-panel shell, with a repeatable browser
+layout check. Exact Figma properties and interaction states remain unverified.
 
-Dashboard panels, authentic observations, database storage, authentication,
+Indicator charts/summaries, authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
 ## Planned scope
@@ -47,11 +48,16 @@ outstanding. Charting is selected during the M2 design audit.
 economic-dash/
   frontend/
     src/
-      App.tsx          React placeholder
+      App.tsx          Dashboard shell and bootstrap connection state
       api.ts           Bootstrap API connection check
       config.ts        Public API URL configuration
+      dashboard-panels.ts  Stable panel IDs/titles; no observations
+      components/      DashboardHeader, MarketTicker and reusable PanelShell
       main.tsx         Browser entrypoint
-      styles.css
+      tokens.css       Shared provisional visual tokens
+      styles.css       Shell, grid, surfaces and responsive layout
+    scripts/
+      verify-layout.mjs  Isolated Chromium viewport/screenshot checks
     .env.example
     .npmrc
     index.html
@@ -625,8 +631,10 @@ provisional raster specification; M2.1's exact-Figma acceptance gate remains ope
 `DashboardPage` contains `DashboardHeader`, `MarketTicker` and a two-column,
 three-row `IndicatorGrid`. Each specialized panel uses a shared `PanelShell`,
 two `SummaryCard` regions, its own chart, legends where shown, and a required
-`SourceAsOf`/availability region. These are proposed component names, not files
-already created. Common axis, annotation, value/change, state and icon primitives
+`SourceAsOf`/availability region. These names describe the M2.1 component plan;
+M2.2 implements the header/ticker/panel shell, with `App` as the page and CSS Grid
+as the grid. Summary, chart and metadata primitives remain pending.
+Common axis, annotation, value/change, state and icon primitives
 belong to M2.3; chart-library/CSS/font decisions remain M2.2/M2.3 work.
 
 The header reads **ECONOMIC INDICATOR**, with red/blue candlestick decoration on
@@ -708,6 +716,63 @@ an approved catalog definition. A missing definition/value remains unavailable/`
 M2.2 can start the provisional structural shell from this specification; final
 visual acceptance waits for the design audit's open items and M2/M6 comparison.
 
+## Dashboard shell — M2.2
+
+The shell follows the provisional PNG geometry: two columns at the evaluation
+width, six 529px panels in the audited order, 23px gaps, and 84px/47px header/ticker
+bands. At widths of 800px or less it reflows to one column. The ticker has its own
+keyboard-focusable horizontal scroller on narrow screens; it does not widen the
+page. No ticker animation is introduced at this checkpoint.
+
+- **UI-ADR-02:** plain CSS, semantic custom properties in `src/tokens.css`, CSS Grid
+  and a reusable `PanelShell` keep the measured layout consistent without a styling
+  dependency. `src/styles.css` owns surfaces, responsive rules and focus treatment.
+- **UI-ADR-03, provisional:** use local Arial/Helvetica/sans-serif fallbacks;
+  no font download or external image is required. CSS gradients and original
+  decorative SVG candle shapes approximate the reference. These are documented
+  substitutes; the actual Figma font/assets remain U1.
+- **UI-ADR-04, provisional:** preserve the target two-column geometry and use an
+  800px single-column breakpoint. Panels have minimum heights, allowing later
+  content to expand rather than being hidden behind a fixed-height clip.
+
+The two summary regions are decorative reservations for M2.3, and each panel has
+a truthful unavailable/loading/error message. The ticker uses `NO DATA` with `—`
+quotes; it does not claim a live feed. Bootstrap connectivity is still checked
+through the configured API URL. Charts, authenticated observations, source/date
+footers and final ticker behavior remain later work.
+
+### Repeatable viewport check
+
+With the frontend running, from `frontend/`:
+
+```powershell
+npm run verify:layout
+```
+
+The Node script launches an isolated headless Chrome/Edge profile, captures PNGs
+and writes `layout-report.json` under ignored
+`frontend/node_modules/.cache/layout-check/results/`. It checks **1214 × 2159**,
+**390 × 844**, **320 × 740**, plus target-size API-request failure. Assertions cover
+panel count/order, approximate PNG-derived target bounds (4px tolerance), heading
+clipping, document overflow against usable width, single-column reflow, browser
+exceptions and initial layout-shift score below 0.01. The failure case blocks
+observed API fetch URLs in that isolated browser and requires the error state.
+This is a shell/layout check, not indicator-data or final visual-parity validation.
+
+Options: `--url <frontend URL>`, `--output <evidence directory>`, and
+`--browser <Chrome/Edge executable>`; `CHROME_PATH` can also select the browser.
+It does not install a browser or start/stop application servers. Profiles remain
+in the ignored cache; your normal browser profile is never used.
+
+M2.2 verification passed all four cases, with zero horizontal overflow and no
+clipped headings/panels or uncaught page exceptions. Target panel tops were
+158px, 710px and 1262px; the final row ended at 1791px. Production build/type-check
+passed. Screenshots/report are in the private implementation evidence folder.
+Exact Figma matching remains open; this checkpoint verifies the provisional shell.
+
+Driver references: [Chrome viewport emulation](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setDeviceMetricsOverride)
+and [screenshot capture](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot).
+
 ## Local setup
 
 The verified runtimes are Node.js **24.19.0**, npm **11.17.0** and Python
@@ -746,8 +811,9 @@ npm ci
 npm run dev -- --strictPort
 ```
 
-Open `http://127.0.0.1:5173`. With the API running, the placeholder displays
-"The dashboard is coming soon." Failed API requests produce an unavailable message.
+Open `http://127.0.0.1:5173`. The styled shell displays six unavailable-data panels
+and no-data quote placeholders. The API bootstrap check resolves independently;
+failed API requests produce an error message while preserving the layout.
 
 `npm run build` type-checks and creates `dist/`; `npm run preview` serves that build
 locally. For preview against the API, explicitly add its exact origin (normally
@@ -806,12 +872,12 @@ if ($webResponse.StatusCode -ne 200 -or -not $webResponse.Content.Contains('/src
 'PASS: API bootstrap, frontend entrypoint and allowed origin'
 ```
 
-Open the frontend URL in a browser and confirm the title and “The dashboard is
-coming soon.” ready state. This also checks that browser JavaScript can reach the
-API configured by `VITE_API_BASE_URL`. The HTTP checks passed on 2026-10-15;
-the rendered ready state and configuration-only API URL change were verified in
-M1.3 with the same application code. The root bootstrap route remains the smoke
-endpoint until M4 implements `/health`.
+At M1.6, browser evidence showed the title and “The dashboard is coming soon.”
+placeholder, and HTTP checks passed on 2026-10-15. M1.3 also verified that changing
+only `VITE_API_BASE_URL` changed the generated API configuration. M2.2 replaces the
+old placeholder with the dashboard shell and supplies the current browser check
+above. The root bootstrap route remains the smoke endpoint until M4 implements
+`/health`.
 
 ### First authentic indicator handoff — M1.6
 

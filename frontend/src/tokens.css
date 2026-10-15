@@ -1,0 +1,49 @@
+:root {
+  color-scheme: dark;
+  --font-body: Arial, "Helvetica Neue", sans-serif;
+  --color-page: #0a0a0a;
+  --color-ticker: #05102a;
+  --color-panel: #060a1d;
+  --color-panel-heading: #1e1f27;
+  --color-summary: #0b283b;
+  --color-text: #f4f7fa;
+  --color-muted: #aebdca;
+  --color-border: #293546;
+  --color-divider: #22576b;
+  --color-cyan: #0fcbff;
+  --color-positive: #45ff5b;
+  --color-ticker-positive: #69f6b8;
+  --color-negative: #d62d2a;
+  --color-series-orange: #e99e10;
+  --color-series-yellow: #f4e15c;
+  --color-series-green: #22d700;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --radius-panel: 16px;
+  --radius-summary: 12px;
+  --shadow-panel: 0 1px 2px #0008, inset 0 0 0 1px #ffffff03;
+  --text-heading: 20px;
+  --text-body: 16px;
+  --text-small: 14px;
+  --text-value: 34px;
+  --header-height: 84px;
+  --ticker-height: 47px;
+  --panel-height: 529px;
+  --panel-heading-height: 66px;
+  --panel-gap: 23px;
+  --page-inset: clamp(16px, 2.4vw, 40px);
+  --page-max-width: 1440px;
+  --panel-background:
+    radial-gradient(ellipse at 100% 105%, #145169cc, transparent 44%),
+    radial-gradient(ellipse at 16% 0%, #105367ba, transparent 41%),
+    linear-gradient(135deg, #ffffff03, transparent 40%, #0002 72%),
+    var(--color-panel);
+  --summary-background:
+    radial-gradient(ellipse at 24% 0%, #14516b99, transparent 78%),
+    linear-gradient(125deg, var(--color-summary), #050e23);
+}
