@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "status": "requirements_only",
+  "source_gate": {
+    "stage": "M3.2",
+    "nse_assessment": "pending_for_every_requirement",
+    "selection": "Use NSE wherever it publishes the required observation; investigate the named authoritative alternatives otherwise.",
+    "candidate_urls": "Research entry points only; retrieval paths, coverage, permissions and publication cadence are unverified.",
+    "selected_source_ids": []
+  },
+  "publishers": {
+    "nse": { "name": "National Stock Exchange of India", "url": "https://www.nseindia.com/", "is_nse": true },
+    "bse": { "name": "BSE Index Services", "url": "https://www.bseindices.com/indices-details/code/16", "is_nse": false },
+    "mospi": { "name": "Ministry of Statistics and Programme Implementation / NSO", "url": "https://www.mospi.gov.in/latest-releases", "is_nse": false },
+    "world_bank": { "name": "World Bank World Development Indicators", "url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.KD.ZG", "is_nse": false },
+    "rbi": { "name": "Reserve Bank of India", "url": "https://www.rbi.org.in/", "is_nse": false },
+    "imf": { "name": "International Monetary Fund Fiscal Monitor", "url": "https://www.imf.org/external/datamapper/datasets/FM", "is_nse": false },
+    "commerce": { "name": "Ministry of Commerce and Industry / DGCI&S", "url": "https://tradestat.commerce.gov.in/", "is_nse": false },
+    "gst_council": { "name": "GST Council", "url": "https://gstcouncil.gov.in/all-gst-revenue", "is_nse": false },
+    "cga": { "name": "Controller General of Accounts", "url": "https://cga.nic.in/Page/Monthly-Accounts-Review.aspx", "is_nse": false },
+    "union_budget": { "name": "Union Budget / Ministry of Finance", "url": "https://www.indiabudget.gov.in/", "is_nse": false }
+  },
+  "common_requirements": {
+    "missing": "Return null with an explicit reason for unresolved definitions, inaccessible sources or missing observations; never use PNG example values.",
+    "history": "Keep source period IDs, labels, basis, bounds, frequency and revisions. The displayed window is configurable after coverage verification; no forward-fill or invented dates.",
+    "comparison": "Return a verified reference series/period and explicit delta unit only when coverage, definition, units and periods align. Otherwise return null.",
+    "source_metadata": "Every observation needs the originating URL, publisher and NSE attribution. Derived values retain all input sources and periods.",
+    "dates": "Keep observation/as-of precision and meaning separate from publication, retrieval, check and last-success timestamps; unknown publication dates remain null.",
+    "freshness": "Release-aware freshness and retention permission belong to each observation. Polling frequency is not source frequency or a freshness guarantee.",
+    "normalization": "Preserve decimal precision; convert verified source scales on the server. Definition, vintage, revisions and transform/input IDs must survive the M4 handoff.",
+    "chart": "The backend supplies validated periods, units, domain, ticks and precision. Summary and history definitions must match. Do not fix the PNG's illustrative axes or data window."
+  },
+  "wire_requirements": {
+    "status": "M2_draft_for_M4_acceptance",
+    "ResponsePeriod": ["id", "label", "basis"],
+    "ResponseObservation": ["value", "unit", "definition_id", "observation_period", "as_of", "as_of_precision", "as_of_kind", "sources", "status", "reason_code", "retention_allowed"],
+    "ResponseComparison": ["value", "unit", "precision", "reference_label", "kind", "reference_series_id", "reference_period_id", "verified"],
+    "ResponseSeries": ["name", "precision", "latest", "comparison", "history", "policy"],
+    "ResponseChart": ["periods", "domain", "ticks", "unit", "precision", "annotation_precision"],
+    "ResponsePanel": ["series", "period_label", "chart"],
+    "ResponseQuote": ["unit", "instrument_id", "name", "change", "change_percent", "comparison_label", "precision", "market_status"],
+    "DashboardResponseV1Draft": ["data", "meta"],
+    "ticker": ["status", "cadence", "cadence_label", "items"],
+    "meta": ["api_version", "generated_at", "version", "partial"]
+  },
+  "panels": [
+    {
+      "indicator_id": "gdp_growth",
+      "summaries": ["gdp_growth_india", "gdp_growth_world"],
+      "reference_periods": "PNG shows five year labels (2021 through 2025); actual release years and retained window remain source-dependent.",
+      "open_questions": ["India fiscal-year versus World calendar-year comparability", "Annual real growth versus quarterly YoY; constant-price base, revisions and actual versus forecast", "Reference period for each summary's percentage-point change"],
+      "series": [
+        {
+          "id": "gdp_growth_india", "unit": "percent_yoy", "role": "bar",
+          "definition_candidate": "India annual real GDP growth, with source year/basis and constant-price methodology preserved.",
+          "frequency_candidates": ["annual"], "period_basis_candidates": ["fiscal", "calendar"],
+          "candidate_source_ids": ["nse", "mospi", "world_bank"],
+          "history_requirement": "Annual observations with matching definitions; do not pair unlike years without explicit labels.",
+          "comparison_requirement": "Prior comparable annual growth; change in percentage points, reference year required."
+        },
+        {
+          "id": "gdp_growth_world", "unit": "percent_yoy", "role": "bar",
+          "definition_candidate": "World aggregate annual real GDP growth; WDI NY.GDP.MKTP.KD.ZG / WLD is the M1 candidate, not a locked source.",
+          "frequency_candidates": ["annual"], "period_basis_candidates": ["calendar"],
+          "candidate_source_ids": ["nse", "world_bank"],
+          "history_requirement": "Annual aggregate observations; verify aggregation, revisions and historical window.",
+          "comparison_requirement": "Prior comparable annual growth; do not substitute India's growth as the change reference."
+        }
+      ]
+    },
+    {
+      "indicator_id": "debt_to_gdp",
+      "summaries": ["debt_to_gdp_india", null],
+      "reference_periods": "Summary says FY25 but the PNG axis shows Jul/Aug days. Debt history must follow authentic reporting periods; daily interpolation is prohibited.",
+      "open_questions": ["Central versus general-government debt; gross versus net and GDP denominator", "Fiscal versus calendar year and actual versus estimated figures", "The second summary says Ind vs US: ratio, gap and comparison definition are unresolved (see unbound_requirements)"],
+      "series": [
+        {
+          "id": "debt_to_gdp_india", "unit": "percent_of_gdp", "role": "area",
+          "definition_candidate": "India government debt divided by matching nominal GDP; scope must be selected before use.",
+          "frequency_candidates": ["annual"], "period_basis_candidates": ["fiscal", "calendar"],
+          "candidate_source_ids": ["nse", "rbi", "union_budget", "imf"],
+          "history_requirement": "Reported annual ratios only, consistent government coverage and vintage.",
+          "comparison_requirement": "Prior comparable annual ratio; delta in percentage points."
+        }
+      ]
+    },
+    {
+      "indicator_id": "trade",
+      "summaries": ["exports", "imports"],
+      "reference_periods": "PNG has annual labels and USD-billion summary amounts but percentage chart axes; retain monetary units consistently, pending definition selection.",
+      "open_questions": ["Goods only versus goods plus services", "Monthly, full fiscal-year or calendar-year coverage; do not mix cumulative and monthly flows", "Source USD scale and revisions; monetary comparisons cannot inherit the PNG's pp label"],
+      "series": [
+        {
+          "id": "imports", "unit": "usd_billion", "role": "bar",
+          "definition_candidate": "India imports in USD billions for a verified coverage and period.",
+          "frequency_candidates": ["monthly", "annual"], "period_basis_candidates": ["calendar", "fiscal"],
+          "candidate_source_ids": ["nse", "commerce", "rbi"],
+          "history_requirement": "Same coverage, currency and period as exports and balance.",
+          "comparison_requirement": "Prior matching period amount; choose explicitly between USD-billion delta and percentage change."
+        },
+        {
+          "id": "exports", "unit": "usd_billion", "role": "bar",
+          "definition_candidate": "India exports in USD billions for the same coverage and period as imports.",
+          "frequency_candidates": ["monthly", "annual"], "period_basis_candidates": ["calendar", "fiscal"],
+          "candidate_source_ids": ["nse", "commerce", "rbi"],
+          "history_requirement": "Same coverage, currency and period as imports and balance.",
+          "comparison_requirement": "Prior matching period amount; choose explicitly between USD-billion delta and percentage change."
+        },
+        {
+          "id": "trade_balance", "unit": "usd_billion", "role": "line",
+          "definition_candidate": "Exports minus imports; deficits are negative, on matched inputs only.",
+          "frequency_candidates": ["monthly", "annual"], "period_basis_candidates": ["calendar", "fiscal"],
+          "candidate_source_ids": ["nse", "commerce", "rbi"],
+          "history_requirement": "Aligned inputs for every point; gaps remain missing.",
+          "comparison_requirement": "No separate summary slot; any later delta needs comparable inputs and an explicit unit.",
+          "transform_candidate": { "operation": "subtract", "inputs": ["exports", "imports"], "gate": "M3.5: identical period, currency, scope, revision and units; retain both input references." }
+        }
+      ]
+    },
+    {
+      "indicator_id": "gst_collection",
+      "summaries": ["gst_total", "gst_monthly_average"],
+      "reference_periods": "PNG shows annual labels, a YOY heading, a percent collection value and an unlabelled average. M2 amount bindings are provisional; no collection-to-growth substitution.",
+      "open_questions": ["Gross versus net and refund treatment", "Annual total versus one month's collection; fiscal/calendar year and complete versus partial windows", "Average window, missing months and source adjustments", "If growth is required, approve a separate definition/series instead of putting percentages in INR-crore fields"],
+      "series": [
+        {
+          "id": "gst_total", "unit": "inr_crore", "role": "bar",
+          "definition_candidate": "India GST collection amount, provisionally gross, for a clearly labelled verified period.",
+          "frequency_candidates": ["monthly", "annual"], "period_basis_candidates": ["calendar", "fiscal"],
+          "candidate_source_ids": ["nse", "gst_council"],
+          "history_requirement": "Annual totals require complete comparable coverage or explicit YTD labels; verify published aggregates before summing months.",
+          "comparison_requirement": "Prior matched window; percent change versus absolute INR-crore delta must be explicit."
+        },
+        {
+          "id": "gst_monthly_average", "unit": "inr_crore", "role": "line",
+          "definition_candidate": "Monthly average GST amount over the same labelled collection window; formula/window pending.",
+          "frequency_candidates": ["monthly", "annual"], "period_basis_candidates": ["calendar", "fiscal"],
+          "candidate_source_ids": ["nse", "gst_council"],
+          "history_requirement": "One verified average per labelled window; preserve constituent months and count.",
+          "comparison_requirement": "Prior window with identical length and coverage; no percentage-point delta on monetary amounts.",
+          "transform_candidate": { "operation": "mean_monthly_inputs", "inputs": ["gst_total"], "gate": "M3.5: acquire underlying monthly amounts for each window; no averaging annual totals or dividing incomplete totals by 12." }
+        }
+      ]
+    },
+    {
+      "indicator_id": "inflation_india",
+      "summaries": ["cpi_yoy", "rbi_target"],
+      "reference_periods": "PNG's chart uses annual labels; candidate CPI releases are monthly. Select a monthly history or a specifically defined annual aggregation; never relabel months as years.",
+      "open_questions": ["All-India combined headline CPI versus rural/urban or another measure; current base and rebasing continuity", "History granularity and summary reference month", "Applicable RBI policy target, legal validity dates and tolerance band; do not assume the PNG's target remains current"],
+      "series": [
+        {
+          "id": "cpi_yoy", "unit": "percent_yoy", "role": "line",
+          "definition_candidate": "All-India combined headline CPI year-on-year inflation for a labelled observation month.",
+          "frequency_candidates": ["monthly"], "period_basis_candidates": ["calendar"],
+          "candidate_source_ids": ["nse", "mospi", "rbi"],
+          "history_requirement": "Monthly published YoY rates or a verified transformation; preserve base changes and revisions.",
+          "comparison_requirement": "Prior comparable monthly YoY rate; change in percentage points with explicit reference month."
+        },
+        {
+          "id": "rbi_target", "unit": "percent", "role": "policy_reference",
+          "definition_candidate": "Published inflation policy target applicable to the CPI observation date, with verified effective interval.",
+          "frequency_candidates": ["policy_event"], "period_basis_candidates": ["calendar"],
+          "candidate_source_ids": ["nse", "rbi"],
+          "history_requirement": "Effective policy intervals, not sampled CPI data; only render a reference where applicable.",
+          "comparison_requirement": "PNG delta is ambiguous; omit unless a verified policy revision or CPI-to-target gap is explicitly defined.",
+          "policy_fields": ["applicable", "valid_from", "valid_to"]
+        }
+      ]
+    },
+    {
+      "indicator_id": "government_expenditure",
+      "summaries": ["expenditure_total", "expenditure_capital"],
+      "reference_periods": "PNG uses annual labels with percentage summaries/axis and unlabelled stacked amounts. M2 amount bindings need matched fiscal periods and INR-crore amounts, pending source selection.",
+      "open_questions": ["Union government versus all levels of government", "Actual, provisional actual, budget estimate or revised estimate; do not mix categories", "Full FY versus cumulative year-to-date figures; monthly flows must be explicitly derived", "Use source reconciliation/rounding precision when checking total against capital plus revenue"],
+      "series": [
+        {
+          "id": "expenditure_capital", "unit": "inr_crore", "role": "bar",
+          "definition_candidate": "Union government capital expenditure, coverage and estimate category pending.",
+          "frequency_candidates": ["monthly_cumulative", "annual"], "period_basis_candidates": ["fiscal"],
+          "candidate_source_ids": ["nse", "cga", "union_budget"],
+          "history_requirement": "Same fiscal window, revision and estimate category as revenue and total.",
+          "comparison_requirement": "Prior matching fiscal window and category; explicitly choose amount delta or percent growth."
+        },
+        {
+          "id": "expenditure_revenue", "unit": "inr_crore", "role": "bar",
+          "definition_candidate": "Union government revenue expenditure for the same window/category as capital.",
+          "frequency_candidates": ["monthly_cumulative", "annual"], "period_basis_candidates": ["fiscal"],
+          "candidate_source_ids": ["nse", "cga", "union_budget"],
+          "history_requirement": "Aligned capital/revenue stack; source numbers only, no fabricated complementary amount.",
+          "comparison_requirement": "No separate summary slot; any later comparison requires matched fiscal windows/categories."
+        },
+        {
+          "id": "expenditure_total", "unit": "inr_crore", "role": "total",
+          "definition_candidate": "Published total Union government expenditure matching capital and revenue; source reconciliation required.",
+          "frequency_candidates": ["monthly_cumulative", "annual"], "period_basis_candidates": ["fiscal"],
+          "candidate_source_ids": ["nse", "cga", "union_budget"],
+          "history_requirement": "Supplied total annotations on aligned fiscal periods; frontend does not calculate the total.",
+          "comparison_requirement": "Prior matching fiscal window and category; explicitly choose amount delta or percent growth."
+        }
+      ]
+    }
+  ],
+  "unbound_requirements": [
+    {
+      "id": "debt_india_us_comparison", "indicator_id": "debt_to_gdp", "summary_slot": 1,
+      "label": "Ind vs US", "status": "definition_unresolved",
+      "unit_candidates": ["percent_of_gdp", "percentage_points"],
+      "frequency_candidates": ["annual"], "period_basis_candidates": ["calendar", "fiscal"],
+      "candidate_source_ids": ["nse", "imf"],
+      "requirement": "Determine whether the second card is US debt/GDP, an India-US gap or another comparison. Require identical government coverage, vintage and comparable period before adding a canonical series and delta.",
+      "unavailable_reason": "comparison_definition_unresolved"
+    }
+  ],
+  "ticker": {
+    "unit": "index_points",
+    "frequency_candidates": ["market_session_quote"],
+    "period_basis_candidates": ["calendar"],
+    "fields": ["instrument_id", "name", "value", "unit", "change", "change_percent", "comparison_label", "precision", "observation_period", "as_of", "as_of_precision", "as_of_kind", "sources", "status", "reason_code", "retention_allowed", "market_status", "definition_id"],
+    "comparison_requirement": "Verify previous official close and session. Change points = quote minus previous close; percent = change / previous close * 100 only for a valid nonzero reference, using decimal arithmetic on the server.",
+    "history_requirement": "No ticker chart requested; previous close and its session/date are required to validate displayed changes.",
+    "timing_requirement": "Source quote timestamp and timezone, exchange trading date, open/closed status and holidays; retrieval time cannot substitute for quote time.",
+    "cadence_requirement": "Feed delay, permissions, refresh interval and non-trading behavior remain unverified. Use unknown cadence until verified; never claim LIVE from the PNG.",
+    "instruments": [
+      { "instrument_id": "sensex", "label": "SENSEX", "identity_candidate": "BSE SENSEX; verify provider identity, not NSE-listed BSE company stock.", "candidate_source_ids": ["nse", "bse"] },
+      { "instrument_id": "nifty_bank", "label": "NIFTY BANK", "identity_candidate": "NSE NIFTY Bank index, not a bank stock or derivative contract.", "candidate_source_ids": ["nse"] },
+      { "instrument_id": "nifty_it", "label": "NIFTY IT", "identity_candidate": "NSE NIFTY IT index, not an IT stock or derivative contract.", "candidate_source_ids": ["nse"] }
+    ]
+  }
+}
