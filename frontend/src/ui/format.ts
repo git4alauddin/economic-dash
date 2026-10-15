@@ -2,6 +2,7 @@ import type { DatePrecision, DecimalValue, Unit } from "./types";
 
 export const MISSING = "—";
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const integerFormats = new Map(["en-US", "en-IN"].map((locale) => [locale, new Intl.NumberFormat(locale, { maximumFractionDigits: 0 })]));
 const unitLabels: Record<Unit, string> = {
   percent_yoy: "% YoY", percent_of_gdp: "% of GDP", percent: "%",
   percentage_points: "pp", inr_crore: "₹ crore", usd_billion: "US$ billion", index_points: "index points",
@@ -32,7 +33,7 @@ export function formatDecimal(value: DecimalValue, precision: number, locale = "
     rounded = magnitude / divisor + (magnitude % divisor * 2n >= divisor ? 1n : 0n);
   }
   const base = 10n ** BigInt(precision);
-  const integer = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(rounded / base);
+  const integer = (integerFormats.get(locale) ?? new Intl.NumberFormat(locale, { maximumFractionDigits: 0 })).format(rounded / base);
   const fraction = precision ? `.${(rounded % base).toString().padStart(precision, "0")}` : "";
   return `${parsed.coefficient < 0n && rounded !== 0n ? "-" : ""}${integer}${fraction}`;
 }

@@ -30,5 +30,5 @@ export interface PanelPresentation {
   asOf: AsOfDate | null;
   chartState?: UiState;
   detail?: string;
-  seriesDetails?: readonly { id: string; label: string; state: UiState; detail: string; sources: readonly SourceReference[]; asOf: AsOfDate | null }[];
+  seriesDetails?: readonly { id: string; label: string; state: UiState; detail: string; sources: readonly SourceReference[]; asOf: AsOfDate | null; precision?: number; history?: readonly { period: string; value: DecimalValue; unit: Unit }[] }[];
 }

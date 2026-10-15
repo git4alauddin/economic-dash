@@ -82,7 +82,8 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
       const item = entries[definition.id];
       return { id: definition.id, label: item?.name ?? definition.label, state: item?.latest.status ?? "unavailable",
         detail: item ? `${stateDetail(item.latest.status, item.latest.reason_code)} History: ${item.history.status}${item.history.truncated ? " · truncated" : ""}.${item.policy ? ` Policy validity: ${item.policy.valid_from} to ${item.policy.valid_to ?? "unspecified end"}.` : ""} ${(item.validationIssues ?? []).join(" ")}` : "No validated observation available.",
-        sources: item ? mergeSources([item.latest, ...item.history.points]) : [], asOf: item?.latest.as_of ?? null };
+        sources: item ? mergeSources([item.latest, ...item.history.points]) : [], asOf: item?.latest.as_of ?? null,
+        precision: item?.precision, history: item?.history.points.map((point) => ({ period: point.observation_period.label, value: point.value, unit: point.unit })) };
     }) };
 }
 

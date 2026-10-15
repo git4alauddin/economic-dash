@@ -2,7 +2,7 @@ import type { PanelChart, PanelPresentation, PlotSeries, SummaryDatum } from "..
 import type { Unit } from "../ui/types";
 
 // SYNTHETIC_PANEL_FIXTURES_ONLY — no observations, source decisions or policy claims.
-const cyan = "#0fc1e3", orange = "#f3a611", green = "#35df28", yellow = "#f4e15c", blue = "#147eff";
+const cyan = "#0fc1e3", orange = "#f3a611", green = "#35df28", yellow = "#f4e15c", blue = "#4a9cff";
 const labels = ["2021", "2022", "2023", "2024", "2025"];
 const summary = (label: string, value: string, unit: Unit, change: string): SummaryDatum => ({ label, value, unit, precision: unit === "usd_billion" || unit === "inr_crore" ? 1 : 2, comparison: { value: change, unit: unit === "percent_yoy" || unit === "percent_of_gdp" || unit === "percent" ? "percentage_points" : unit, precision: 1, referenceLabel: "vs 2024" } });
 const series = (id: string, label: string, kind: PlotSeries["kind"], color: string, values: string[]): PlotSeries => ({ id, label, kind, color, values });

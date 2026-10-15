@@ -18,6 +18,9 @@
     "verify:panels": "node scripts/verify-layout.mjs --mode panels",
     "verify:ticker": "node scripts/verify-layout.mjs --mode ticker",
     "verify:states": "node scripts/verify-layout.mjs --mode states",
+    "verify:audit": "node scripts/verify-layout.mjs --mode audit",
+    "verify:performance": "node scripts/verify-layout.mjs --mode performance",
+    "benchmark:ui": "node scripts/benchmark-ui.mjs",
     "test:ui": "node --test scripts/test-ui.mjs"
   },
   "dependencies": {

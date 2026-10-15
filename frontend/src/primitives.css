@@ -34,12 +34,18 @@
 .chart-frame { position: relative; min-width: 0; margin: 0; }
 .chart-frame > svg { display: block; width: 100%; height: auto; overflow: hidden; }
 .chart-axes line { stroke: #5b5b5b; stroke-width: 1; }
-.chart-axes text { fill: #bfcad6; font-size: 14px; }
+.chart-axes text { fill: #bfcad6; font-size: var(--chart-axis-size, 14px); }
 .chart-series { fill: none; stroke: var(--color-cyan); stroke-width: 3; }
 .chart-reference line { stroke: var(--color-series-yellow); stroke-width: 1.5; stroke-dasharray: 5 4; }
-.chart-reference text { fill: #f4df8d; font-size: 13px; }
+.chart-reference text { fill: #f4df8d; font-size: var(--chart-small-size, 13px); }
+.chart-frame[data-compact-chart] .plot-annotation { display: none; }
+.chart-unit-caption { display: none; }
+.chart-frame[data-compact-chart] .axis-unit { display: none; }
+.chart-frame[data-compact-chart] .chart-unit-caption { position: absolute; display: block; top: -15px; left: 0; font-size: 10px; line-height: 1.2; color: #bfcad6; }
 .chart-point { stroke: var(--color-panel); stroke-width: 2; }
-.chart-point:focus { stroke: white; stroke-width: 3; outline: none; }
+.chart-point:focus { outline: none; }
+.chart-focus-ring { display: none; }
+.chart-point:focus > .chart-focus-ring { display: block; }
 .chart-tooltip { position: absolute; top: 4px; right: 4px; z-index: 2; display: grid; gap: 4px; max-width: calc(100% - 8px); padding: 10px 12px; border: 1px solid #61778a; border-radius: 8px; background: #081427f5; box-shadow: 0 4px 20px #0006; font-size: 13px; overflow-wrap: anywhere; pointer-events: none; }
 .chart-note { color: #f4df8d; font-size: 12px; overflow-wrap: anywhere; }
 .ui-preview { max-width: 1214px; margin-inline: auto; padding: 24px; }

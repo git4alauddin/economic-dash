@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
+import { contrastRatio } from "./audit-ui.mjs";
 
 // Existing Vite transforms TS/TSX; Node's runner supplies assertions and reporting.
 const server = await createServer({
@@ -22,6 +23,7 @@ try {
   const StateMessage = await component("ui/StateMessage");
   const PeriodLabel = await component("ui/PeriodLabel");
   const ChartFrame = await component("charts/ChartFrame");
+  const PanelMetadata = await component("panels/PanelMetadata");
   const panels = await server.ssrLoadModule("/src/components/panels/IndicatorPanels.tsx");
   const { panelPoints, default: PanelPlot } = await server.ssrLoadModule("/src/components/panels/PanelPlots.tsx");
   const { panelFixtures } = await server.ssrLoadModule("/src/preview/panel-fixtures.ts");
@@ -332,6 +334,32 @@ try {
     await assert.rejects(client.loadDashboard(null, controller.signal, "test", async () => { controller.abort(); return new Response(JSON.stringify(dashboardFixture())); }), { name: "AbortError" });
     const raw = dashboardFixture(); raw.meta.generated_at = "2030-01-01T00:00:00Z";
     assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.summaries[0].state, "fresh");
+  });
+  await test("dense histories retain every observation and table row with one chart Tab stop", () => {
+    const labels=Array.from({length:500},(_,index)=>String(1500+index));
+    const points=labels.flatMap((label,index)=>[{id:`a:${index}`,index,label:`A ${label}`,value:'0'},{id:`b:${index}`,index,label:`B ${label}`,value:'5'}]);
+    const html=render(ChartFrame,{title:'Dense synthetic history',description:'Test',labels,points,domain:[0,10],ticks:['0','5','10'],unit:'percent',precision:2,state:'fresh'});
+    assert.equal((html.match(/tabindex="0"/g)??[]).length,1);
+    assert.equal((html.match(/class="chart-point"/g)??[]).length,1000);
+    assert.equal((html.match(/<tr>/g)??[]).length,1001);
+    assert.ok((html.match(/<text /g)??[]).length < 15);
+    assert.ok(html.includes('Left/Right, Home and End') && html.includes('B 1999'));
+  });
+  await test("visible history tables preserve missing values, zero and precise supplied decimals", () => {
+    const data=adapter.adaptDashboard(dashboardFixture()).panels.gdp_growth;
+    data.seriesDetails[0].history=[{period:'Missing',value:null,unit:'percent'},{period:'Zero',value:'0',unit:'percent'},{period:'Large',value:'9007199254740993.125',unit:'percent'}];
+    data.seriesDetails[0].precision=3;
+    const html=render(PanelMetadata,{data});
+    assert.ok(html.includes('class="series-history-table"') && html.includes('<caption>India history (%)</caption>'));
+    assert.ok(html.includes('—') && html.includes('0.000%') && html.includes('9,007,199,254,740,993.125%'));
+    assert.ok(html.includes('scope="col"') && html.includes('scope="row"'));
+  });
+  await test("annotation and plot-boundary colors pass the scoped conservative contrast check", () => {
+    assert.equal(contrastRatio('#ffffff','#000000'),21);
+    assert.ok(contrastRatio('#e5edf4','#081427')>=4.5);
+    assert.ok(contrastRatio('#4a9cff','#145169')>=3);
+    const html=render(panels.ExpenditurePanel,{data:panelFixtures[5]});
+    assert.ok(html.includes('fill="#081427"') && html.includes('class="plot-bar"') && html.includes('stroke="#4a9cff"'));
   });
 } finally {
   await server.close();

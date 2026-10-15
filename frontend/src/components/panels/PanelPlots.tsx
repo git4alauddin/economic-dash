@@ -36,7 +36,7 @@ function ValueAnnotation({ x, y, value, precision, pill = false, color }: { x: n
   const center = Math.min(plotBox.right - width / 2, Math.max(plotBox.left + width / 2, x));
   const baseline = Math.min(plotBox.bottom - 6, Math.max(plotBox.top + 10, y));
   return <g className="plot-annotation" aria-hidden="true" pointerEvents="none" stroke="none">
-    {pill && <rect x={center - width / 2} y={baseline - 15} width={width} height="21" rx="10" fill="#596774cc" />}
+    {pill && <rect x={center - width / 2} y={baseline - 15} width={width} height="21" rx="10" fill="#081427" />}
     <text x={center} y={baseline} textAnchor="middle" fill={color ?? "#e5edf4"}>{label}</text>
   </g>;
 }
@@ -68,7 +68,7 @@ export default function PanelPlot({ kind, chart, state }: { kind: PanelKind; cha
     </g>)}
     {points.filter((point) => (point.slot ?? -1) >= 0).map((point) => {
       const rectangle = rectangleFor(point, scale);
-      return rectangle && <rect key={point.id} {...rectangle} rx="4" fill={`url(#${gradientId(point.seriesId!)})`} />;
+      return rectangle && <rect key={point.id} className="plot-bar" {...rectangle} rx="4" fill={`url(#${gradientId(point.seriesId!)})`} stroke={point.color} strokeWidth="1" vectorEffect="non-scaling-stroke" />;
     })}
     <g pointerEvents="none" aria-hidden="true">{chart.series.filter((series) => series.kind === "line" || series.kind === "area").map((series) => <g key={series.id}>
     {buildLinePaths(series.values, scale).map((path, index) => <path key={index} className="chart-series" d={path} style={{ stroke: series.color }} />)}
@@ -80,22 +80,25 @@ export default function PanelPlot({ kind, chart, state }: { kind: PanelKind; cha
     const value = toChartNumber(point.value)!;
     const y = scale.y(point.plotValue === undefined ? value : point.plotValue)!;
     const x = scale.x(point.index);
+    const annotate = chart.labels.length <= 12 || point.index % Math.ceil(chart.labels.length / 8) === 0 || point.index === chart.labels.length - 1;
     if (series.kind === "bar") {
       const rectangle = rectangleFor(point, scale);
       if (!rectangle) return null;
       return <>
         <rect {...rectangle} rx="4" fill="transparent" stroke="none" />
-        <ValueAnnotation x={rectangle.x + rectangle.width / 2} y={kind === "expenditure" ? rectangle.y + Math.min(22, rectangle.height / 2 + 4) : value < 0 ? rectangle.y + rectangle.height + 17 : rectangle.y - 8} value={point.value} precision={chart.annotationPrecision} />
+        {annotate && <ValueAnnotation x={rectangle.x + rectangle.width / 2} y={kind === "expenditure" ? rectangle.y + Math.min(22, rectangle.height / 2 + 4) : value < 0 ? rectangle.y + rectangle.height + 17 : rectangle.y - 8} value={point.value} precision={chart.annotationPrecision} pill={kind === "expenditure"} />}
+        <g className="chart-focus-ring" aria-hidden="true" fill="none" pointerEvents="none"><rect {...rectangle} rx="4" stroke="#060a1d" strokeWidth="7" /><rect {...rectangle} rx="4" stroke="#fff" strokeWidth="3" /></g>
       </>;
     }
     return <>
       <circle cx={x} cy={y} r={series.kind === "total" ? 3 : 4} fill={series.color} />
-      <ValueAnnotation x={x} y={series.kind === "total" ? y - 12 : y + (point.index % 2 ? -13 : 24)} value={point.value} precision={chart.annotationPrecision} pill={series.kind !== "total"} />
+      {annotate && <ValueAnnotation x={x} y={series.kind === "total" ? y - 12 : y + (point.index % 2 ? -13 : 24)} value={point.value} precision={chart.annotationPrecision} pill={series.kind !== "total"} />}
+      <g className="chart-focus-ring" aria-hidden="true" fill="none" pointerEvents="none"><circle cx={x} cy={y} r="8" stroke="#060a1d" strokeWidth="6" /><circle cx={x} cy={y} r="8" stroke="#fff" strokeWidth="2" /></g>
     </>;
   };
 
   return <div className={`indicator-chart indicator-chart-${kind}`}>
-    <ChartFrame title={`${kind} history`} description="Values and periods are supplied by the panel model. Missing observations remain gaps."
+    <ChartFrame title={`${kind} history`} description="Values and periods are supplied by the panel model. Missing observations remain gaps. Series details provides visible history tables when available."
       labels={chart.labels} domain={chart.domain} ticks={chart.ticks} unit={chart.unit} precision={chart.precision} axisPrecision={0}
       banded={banded} viewBoxHeight={304} state={state} points={points} references={chart.references} renderPlot={backdrop} renderMark={mark} />
   </div>;

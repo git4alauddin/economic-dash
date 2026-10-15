@@ -34,10 +34,19 @@ export function dashboardFixture(retention = true) {
     meta: { api_version: "v1", generated_at: "2025-01-03T12:00:00Z", version: "synthetic_snapshot_1", partial: false } };
 }
 
-export const stateScenarioNames = ["fresh", "loading", "partial", "empty", "unavailable", "error", "retained", "no-retention", "mixed-retention", "malformed", "unauthorized"] as const;
+export const stateScenarioNames = ["fresh", "loading", "partial", "empty", "unavailable", "error", "retained", "no-retention", "mixed-retention", "malformed", "unauthorized", "dense"] as const;
 export type StateScenario = typeof stateScenarioNames[number];
 export function responseFixture(scenario: StateScenario) {
   const raw = dashboardFixture();
+  if (scenario === "dense") {
+    const panel = raw.data.panels.gdp_growth;
+    panel.period_label = "1500–1999 · synthetic stress case";
+    panel.chart.periods = Array.from({length:500},(_,index)=>({id:String(1500+index),label:String(1500+index),basis:"calendar"}));
+    for (const series of Object.values(panel.series)) {
+      const originals = series.history.points;
+      series.history.points = panel.chart.periods.map((period,index)=>({...originals[index%originals.length],observation_period:{...period,basis:"calendar"},as_of:period.id}));
+    }
+  }
   if (scenario === "partial") {
     raw.data.panels.gdp_growth.series.gdp_growth_world.latest.value = "NaN";
     raw.meta.partial = true;

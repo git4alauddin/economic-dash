@@ -1,25 +1,28 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { inspectAuditDocument, auditInteractions, contrastRatio } from "./audit-ui.mjs";
 
 const frontendRoot = fileURLToPath(new URL("../", import.meta.url));
 const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   if (!["--url", "--output", "--browser", "--mode"].includes(key) || !process.argv[index + 1]) {
-    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels|ticker|states.");
+    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels|ticker|states|audit|performance.");
   }
   options.set(key, process.argv[index + 1]);
 }
 const mode = options.get("--mode") ?? "dashboard";
-if (!["dashboard", "primitives", "panels", "ticker", "states"].includes(mode)) throw new Error("Unknown verification mode.");
-const targetUrl = new URL(options.get("--url") ?? "http://127.0.0.1:5173/");
+if (!["dashboard", "primitives", "panels", "ticker", "states", "audit", "performance"].includes(mode)) throw new Error("Unknown verification mode.");
+const targetUrl = new URL(options.get("--url") ?? (mode === "performance" ? "http://127.0.0.1:4173/" : "http://127.0.0.1:5173/"));
 if (mode === "primitives" && targetUrl.pathname === "/") targetUrl.pathname = "/__ui-preview";
 if (mode === "panels" && targetUrl.pathname === "/") targetUrl.pathname = "/__panel-preview";
 if (mode === "ticker" && targetUrl.pathname === "/") targetUrl.pathname = "/__ticker-preview";
 if (mode === "states" && targetUrl.pathname === "/") targetUrl.pathname = "/__states-preview";
+if (mode === "audit" && targetUrl.pathname === "/") targetUrl.pathname = "/__states-preview";
 const url = targetUrl.href;
 const cache = join(frontendRoot, "node_modules/.cache/layout-check");
 const output = resolve(options.get("--output") ?? join(cache, mode === "dashboard" ? "results" : mode));
@@ -66,6 +69,10 @@ async function waitFor(probe, description, timeout = 15000) {
 let socket;
 let command;
 const report = { mode, url, checkedAt: new Date().toISOString(), viewports: [] };
+if (mode === "performance") {
+  const assets = await readdir(join(frontendRoot,'dist/assets'));
+  report.assets = await Promise.all(assets.filter((name)=>/\.(js|css)$/.test(name)).map(async(name)=>{const body=await readFile(join(frontendRoot,'dist/assets',name));return {name,bytes:body.length,gzipBytes:gzipSync(body).length};}));
+}
 const runtimeErrors = [];
 const fetchUrls = new Set();
 try {
@@ -120,8 +127,14 @@ try {
   await command("Page.enable");
   await command("Runtime.enable");
   await command("Network.enable");
+  await command("Performance.enable");
+  await command("Page.bringToFront");
+  if (mode === "performance") await command("Network.setCacheDisabled", {cacheDisabled:true});
   await command("Page.addScriptToEvaluateOnNewDocument", { source: `
     window.layoutShiftScore = 0;
+    window.auditLongTasks = [];
+    new PerformanceObserver((list) => { for (const e of list.getEntries()) window.auditLongTasks.push({ms:e.duration,start:e.startTime}); }).observe({type:'longtask',buffered:true});
+    new PerformanceObserver((list) => { window.auditLcp = list.getEntries().at(-1)?.startTime ?? null; }).observe({type:'largest-contentful-paint',buffered:true});
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         if (!entry.hadRecentInput) window.layoutShiftScore += entry.value;
@@ -135,9 +148,12 @@ try {
     { name: "compact", width: 320, height: 740 },
     ...(mode === "dashboard" ? [{ name: "api-offline", width: 1214, height: 2159, offline: true }] : []),
     ...(mode === "ticker" ? [{ name: "reduced-motion", width: 390, height: 844, reducedMotion: true }] : []),
+    ...(["audit", "performance"].includes(mode) ? [{name:"wide",width:1920,height:1080},{name:"reflow-200-equivalent",width:607,height:1080},{name:"reduced-motion",width:390,height:844,reducedMotion:true}] : []),
+    ...(mode === "performance" ? [{name:"cpu-4x",width:1214,height:2159,cpuRate:4}] : []),
   ];
   for (const viewport of viewports) {
     runtimeErrors.length = 0;
+    await command("Emulation.setCPUThrottlingRate", {rate:viewport.cpuRate ?? 1});
     await command("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
     await command("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: viewport.reducedMotion ? "reduce" : "no-preference" }] });
     if (viewport.offline) {
@@ -150,8 +166,9 @@ try {
     const readyExpression = mode === "ticker" ? "document.querySelector('[data-ticker-preview]')" : mode !== "primitives" ? "document.querySelector('[data-dashboard-root]') && document.querySelector('[data-dashboard-root]').dataset.apiState !== 'loading'" : "document.querySelector('[data-ui-preview]')";
     await waitFor(() => evaluate(`Boolean(performance.timeOrigin !== ${previousTimeOrigin} && document.readyState === 'complete' && (${readyExpression}))`), "the new page ready state");
     await evaluate("document.fonts.ready.then(() => true)");
+    if (["audit","performance"].includes(mode)) await command("Page.captureScreenshot", {format:"png"});
     await delay(150);
-    const inspect = mode === "ticker" ? inspectTickerPreview : mode !== "primitives" ? inspectLayout : inspectPrimitives;
+    const inspect = ["audit", "performance"].includes(mode) ? inspectAuditDocument : mode === "ticker" ? inspectTickerPreview : mode !== "primitives" ? inspectLayout : inspectPrimitives;
     const measurements = await evaluate(`(${inspect.toString()})()`);
     const issues = [];
     if (measurements.viewportWidth !== viewport.width || measurements.viewportHeight !== viewport.height) issues.push("Unexpected CSS viewport");
@@ -159,7 +176,36 @@ try {
     if (measurements.clippedHeadings) issues.push("Heading text is clipped");
     if (measurements.layoutShiftScore > 0.01) issues.push("Unexpected initial layout shift");
     if (runtimeErrors.length) issues.push("Browser JavaScript exceptions");
-    if (mode === "ticker") {
+    if (["audit", "performance"].includes(mode)) {
+      if (measurements.duplicateIds || measurements.danglingAria.length || measurements.mainCount !== 1 || measurements.h1Count !== 1 || measurements.panelCount !== 6 || measurements.language !== 'en' || measurements.statusRegions !== 1) issues.push("Accessibility structure check failed");
+      const ax = await command("Accessibility.getFullAXTree");
+      measurements.ax = { namedCharts: ax.nodes.filter((node) => !node.ignored && node.role?.value === 'group' && /history/.test(node.name?.value ?? '')).length, tables: ax.nodes.filter((node) => !node.ignored && node.role?.value === 'table').length, unnamedButtons: ax.nodes.filter((node) => !node.ignored && node.role?.value === 'button' && !node.name?.value).length };
+      if (measurements.ax.unnamedButtons) issues.push("Unnamed accessible button");
+      if (measurements.panels.some((panel) => panel.x < 0 || panel.x + panel.width > measurements.layoutWidth + 1)) issues.push("Panel outside layout bounds");
+      const columns = new Set(measurements.panels.map((panel) => Math.round(panel.x))).size;
+      if (columns !== (viewport.width <= 800 ? 1 : 2)) issues.push("Unexpected responsive columns");
+      if (viewport.width === 1214 && measurements.panels.some((panel, index) => Math.abs(panel.y - [158,158,710,710,1262,1262][index]) > 4 || Math.abs(panel.height - 529) > 4)) issues.push("Target panel geometry changed");
+      if (mode === "audit") {
+        const interactions = await auditInteractions(command, evaluate, keyPress);
+        measurements.keyboard = interactions.checks;
+        measurements.dense = interactions.dense;
+        if (Object.values(measurements.keyboard).some((passed) => !passed)) issues.push("Chart keyboard traversal failed");
+        if (measurements.chartCount !== 6 || measurements.dataTableCount !== 6 || measurements.ax.tables !== 6 || measurements.chartTabStops !== 6) issues.push("Chart data alternatives/tab order failed");
+        measurements.annotationContrast = measurements.annotationPairs.map((pair) => ({...pair,ratio:pair.foreground && pair.background ? contrastRatio(pair.foreground,pair.background) : 0}));
+        measurements.boundaryContrast = measurements.barStrokes.map((color) => ({color,conservativeBackground:'#145169',ratio:color ? contrastRatio(color,'#145169') : 0}));
+        if (!measurements.annotationContrast.length || measurements.annotationContrast.some((pair) => pair.ratio < 4.5)) issues.push("Opaque annotation contrast below 4.5:1");
+        if (measurements.boundaryContrast.some((pair) => pair.ratio < 3)) issues.push("Plot boundary contrast below 3:1");
+        if (measurements.minChartTextPx < 9.99) issues.push("Rendered axes below the 10px compact-chart floor");
+      } else {
+        const metrics = Object.fromEntries((await command('Performance.getMetrics')).metrics.map((entry)=>[entry.name,entry.value]));
+        measurements.performance.heapUsedBytes = metrics.JSHeapUsedSize;
+        const fcp=measurements.performance.paints.find((entry)=>entry.name==='first-contentful-paint')?.ms;
+        const budgetMs=viewport.cpuRate ? 4000 : 2500;
+        if (typeof fcp !== 'number' || fcp > budgetMs || typeof measurements.performance.lcp !== 'number' || measurements.performance.lcp > budgetMs) issues.push('Local paint budget exceeded or unavailable');
+        if (measurements.performance.resources.some((entry)=>entry.name.startsWith('/src/') || entry.name.startsWith('/@vite/'))) issues.push('Performance mode requires a production preview');
+        if (report.assets.filter((entry)=>entry.name.endsWith('.js')).reduce((sum,entry)=>sum+entry.bytes,0)>300*1024 || report.assets.filter((entry)=>entry.name.endsWith('.css')).reduce((sum,entry)=>sum+entry.bytes,0)>30*1024) issues.push('Production asset budget exceeded');
+      }
+    } else if (mode === "ticker") {
       if (!measurements.fixtureBanner || measurements.quoteCount !== 3 || measurements.tickerHeight !== 47) issues.push("Incomplete/stretched ticker preview");
       measurements.interactions = await inspectTickerInteractions(command, evaluate, async (name) => {
         const capture = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
@@ -321,6 +367,7 @@ async function inspectTooltip(command, evaluate) {
 function inspectPanels() {
   const charts = [...document.querySelectorAll(".indicator-chart svg")];
   return {
+    clippedSvgLabels: charts.flatMap((svg) => [...svg.querySelectorAll('text')].flatMap((node) => { const box=node.getBBox(); return box.x < -1 || box.y < -1 || box.x+box.width > svg.viewBox.baseVal.width+1 || box.y+box.height > svg.viewBox.baseVal.height+1 ? [{text:node.textContent,box:{x:box.x,y:box.y,width:box.width,height:box.height}}] : []; })),
     fixtureBanner: document.querySelector("[data-fixture-banner]")?.textContent.includes("Not financial observations"),
     summaryCount: document.querySelectorAll(".panel-summaries .summary-value").length,
     iconCount: document.querySelectorAll(".panel-icon").length,
@@ -360,7 +407,7 @@ async function inspectPanelTooltips(command, evaluate) {
 }
 
 async function keyPress(command, key, code = key, extra = {}) {
-  const windowsVirtualKeyCode = { Enter: 13, Tab: 9, Escape: 27, " ": 32, End: 35, Home: 36, ArrowLeft: 37, ArrowRight: 39 }[key];
+  const windowsVirtualKeyCode = { Enter: 13, Tab: 9, Escape: 27, " ": 32, PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowRight: 39 }[key];
   const text = key === "Enter" ? "\r" : key === " " ? " " : undefined;
   await command("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, text, ...extra });
   await command("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode, ...extra });

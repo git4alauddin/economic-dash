@@ -20,10 +20,9 @@
 .panel-plot-region { flex: 1; min-width: 0; display: flex; align-items: center; }
 .panel-plot-region > .state-message { flex: 1; }
 .indicator-chart { width: 100%; min-width: 0; }
-.indicator-chart .chart-axes text { font-size: 16px; }
-.indicator-chart .chart-axes .axis-unit { font-size: 13px; }
+.indicator-chart .chart-axes text { font-size: var(--chart-axis-size, 16px); }
+.indicator-chart .chart-axes .axis-unit { font-size: var(--chart-small-size, 13px); }
 .plot-annotation text { font-size: 15px; }
-.chart-point:focus > rect { stroke: white; stroke-width: 2; }
 .indicator-chart .chart-note { font-size: 11px; }
 .indicator-chart .chart-frame > .state-stale { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 1; padding: 1px 4px; border-radius: 3px; background: #081427f5; font-size: 10px; white-space: nowrap; }
 .panel-preview-notice { position: fixed; top: 3px; left: 8px; z-index: 4; padding: 3px 6px; border: 1px solid #bfa252; border-radius: 4px; background: #3c321aee; color: #ffe8a3; font-size: 9px; line-height: 1.2; }
@@ -34,12 +33,15 @@
 .panel-provenance > .source-as-of { flex: 1; }
 .indicator-content:has(.panel-data-details) { gap: 5px; }
 .panel-data-details { flex: 0 0 auto; font-size: 11px; color: #c0e4ef; }
-.panel-data-details > summary { cursor: pointer; padding: 2px; }
+.panel-data-details > summary { cursor: pointer; padding: 4px 2px; min-height: 24px; border-radius: 3px; }
 .panel-data-popover { position: absolute; z-index: 5; bottom: calc(100% + 4px); left: 0; right: 0; max-height: 250px; overflow: auto; padding: 12px; border: 1px solid #547998; border-radius: 6px; background: #081a2f; box-shadow: 0 6px 20px #000b; line-height: 1.4; overflow-wrap: anywhere; }
 .panel-data-popover > p { color: #f4df8d; font-size: 12px; }
 .panel-data-popover section { margin-block: 10px; }
 .panel-data-popover h3 { font-size: 12px; margin-block: 4px; }
 .panel-data-popover section > p { margin-bottom: 6px; }
+.series-history-table { width: 100%; table-layout: fixed; margin-top: 10px; border-collapse: collapse; color: #e5edf4; font-size: 14px; }
+.series-history-table caption { text-align: left; margin-bottom: 4px; font-size: 12px; }
+.series-history-table th, .series-history-table td { padding: 4px; border: 1px solid #547998; text-align: left; overflow-wrap: anywhere; }
 .state-preview-control { position: fixed; z-index: 8; bottom: 8px; left: 8px; display: grid; gap: 4px; max-width: calc(100% - 16px); padding: 6px; border: 1px solid #bfa252; border-radius: 4px; background: #302713f5; color: #ffe8a3; font-size: 11px; }
 .state-preview-control select { color: white; background: #17314e; border: 1px solid #547998; min-height: 28px; max-width: 100%; }
 @media (max-width: 600px) {
