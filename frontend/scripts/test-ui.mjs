@@ -25,6 +25,9 @@ try {
   const panels = await server.ssrLoadModule("/src/components/panels/IndicatorPanels.tsx");
   const { panelPoints, default: PanelPlot } = await server.ssrLoadModule("/src/components/panels/PanelPlots.tsx");
   const { panelFixtures } = await server.ssrLoadModule("/src/preview/panel-fixtures.ts");
+  const MarketTicker = await component("MarketTicker");
+  const ticker = await server.ssrLoadModule("/src/ui/ticker-model.ts");
+  const { tickerFixture, tickerScenarios } = await server.ssrLoadModule("/src/preview/ticker-fixtures.ts");
   const render = (type, props) => renderToStaticMarkup(createElement(type, props));
 
   await test("decimal display preserves values above Number's safe integer range", () => {
@@ -157,6 +160,38 @@ try {
     assert.ok(!render(PanelPlot, { kind: "inflation", chart: null, state: "unavailable" }).includes("chart-reference"));
     const bad = { ...chart, labels: ["Only one period"] };
     assert.ok(render(PanelPlot, { kind: "inflation", chart: bad, state: "fresh" }).includes("Data unavailable"));
+  });
+  await test("ticker defaults expose missing quotes without claiming live prices", () => {
+    const html = render(MarketTicker, {});
+    assert.ok(html.includes("NO DATA") && !html.includes("LIVE"));
+    assert.equal((html.match(/Quote unavailable/g) ?? []).length, 3);
+    assert.ok(!html.includes("81234") && html.includes('aria-expanded="false"'));
+  });
+  await test("ticker preserves supplied positive/negative/zero quotes and changes", () => {
+    const html = render(MarketTicker, { model: tickerFixture });
+    assert.ok(html.includes("81,234.56") && html.includes("52,123.45") && html.includes("0.00 index points"));
+    assert.ok(html.includes("Increase: 0.40%") && html.includes("Decrease: -0.26%") && html.includes("No change: 0.00%"));
+    assert.ok(html.includes("SCHEDULED") && !html.includes("LIVE"));
+  });
+  await test("ticker states suppress hidden values and require explicit retention", () => {
+    for (const state of ["loading", "error", "empty", "unavailable"]) {
+      const model = { ...tickerFixture, state };
+      const html = render(MarketTicker, { model });
+      assert.ok(!html.includes("81,234.56") && !html.includes("Increase: 0.40%"));
+      assert.equal(ticker.quoteIsVisible(model, model.items[0]), false);
+    }
+    const stale = render(MarketTicker, { model: tickerScenarios.stale });
+    assert.ok(stale.includes("STALE") && stale.includes("81,234.56"));
+    assert.equal((stale.match(/class="ticker-stale"/g) ?? []).length, 3);
+    const partial = render(MarketTicker, { model: tickerScenarios.partial });
+    assert.ok(partial.includes("81,234.56") && !partial.includes("52,123.45"));
+  });
+  await test("ticker badge reflects actual availability before cadence or refresh", () => {
+    for (const [scenario, status] of [["scheduled", "SCHEDULED"], ["delayed", "DELAYED"], ["updating", "UPDATING"], ["stale", "STALE"], ["loading", "LOADING"], ["error", "ERROR"], ["empty", "NO DATA"], ["unavailable", "NO DATA"]]) assert.equal(ticker.tickerStatus(tickerScenarios[scenario]), status);
+    assert.equal(ticker.tickerStatus({ ...tickerScenarios.stale, refreshing: true }), "STALE");
+    const missing = { ...tickerFixture, refreshing: true, items: tickerFixture.items.map((quote) => ({ ...quote, value: null })) };
+    assert.equal(ticker.tickerStatus(missing), "NO DATA");
+    assert.ok(render(MarketTicker, { model: tickerScenarios.empty }).includes("No instruments available"));
   });
 } finally {
   await server.close();

@@ -22,6 +22,10 @@ if (import.meta.env.DEV && window.location.pathname === "/__ui-preview") {
   void import("./preview/PanelsPreview").then(({ default: Preview }) => {
     root.render(<StrictMode><Preview /></StrictMode>);
   });
+} else if (import.meta.env.DEV && window.location.pathname === "/__ticker-preview") {
+  void import("./preview/TickerPreview").then(({ default: Preview }) => {
+    root.render(<StrictMode><Preview /></StrictMode>);
+  });
 } else {
   root.render(<StrictMode><App /></StrictMode>);
 }

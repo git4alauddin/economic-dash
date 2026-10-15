@@ -16,6 +16,7 @@
     "verify:layout": "node scripts/verify-layout.mjs",
     "verify:primitives": "node scripts/verify-layout.mjs --mode primitives",
     "verify:panels": "node scripts/verify-layout.mjs --mode panels",
+    "verify:ticker": "node scripts/verify-layout.mjs --mode ticker",
     "test:ui": "node --test scripts/test-ui.mjs"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { checkApiConnection } from "./api";
 import DashboardLayout from "./components/DashboardLayout";
 import { indicatorPanelComponents } from "./components/panels/IndicatorPanels";
+import { unavailableTicker } from "./ui/ticker-model";
 
 export default function App() {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -27,7 +28,7 @@ export default function App() {
   }[status];
 
   return (
-    <DashboardLayout apiState={status} announcement={message}>
+    <DashboardLayout apiState={status} announcement={message} ticker={{ ...unavailableTicker, state: status === "ready" ? "unavailable" : status }}>
       {indicatorPanelComponents.map((Panel, index) => <Panel key={index} state={status === "ready" ? "unavailable" : status} />)}
     </DashboardLayout>
   );

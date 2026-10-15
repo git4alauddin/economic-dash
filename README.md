@@ -32,6 +32,10 @@ substitutes and populated development previews. Production panels show missing
 values until validated data is connected. Exact design/source definitions remain
 open as described below.
 
+M2.5 adds the typed market ticker, quote details, keyboard scrolling and explicit
+availability/cadence states. Its development preview exercises synthetic quotes;
+production still has no market feed. The interaction choices are documented below.
+
 Authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
@@ -65,8 +69,8 @@ economic-dash/
         ui/            Values, comparisons, periods, states and source/as-of footer
         charts/        SVG chart frame, point tooltips and legend
         panels/        Six specialized panels, plots and original SVG icons
-      ui/              Presentation types, exact display formatting, plot geometry
-      preview/         Development-only primitives/panel previews and fixtures
+      ui/              Presentation types, ticker model, formatting, plot geometry
+      preview/         Development-only primitives/panel/ticker previews and fixtures
       main.tsx         Browser entrypoint
       tokens.css       Shared provisional visual tokens
       styles.css       Shell, grid, surfaces and responsive layout
@@ -952,6 +956,84 @@ ignored `node_modules/.cache/layout-check/panels/`.
 Production build/type-check passed. Fixture routes/modules and distinctive
 synthetic values were checked for exclusion from the production JS. Screenshots,
 reports and remaining limitations are recorded in the private implementation log.
+
+## Market ticker and visible interactions — M2.5
+
+`MarketTicker` takes a `TickerPresentation`: overall state, refresh-in-progress
+flag, supplied cadence/description and attributed quotes. Each quote carries an
+instrument ID/label, independent state, decimal-string value, supplied point and
+percent changes, comparison label, display precision, observation date and sources.
+This is a presentation boundary; M2.6/M4 still own validated API adaptation.
+
+Values render only when both the overall and item states allow `fresh` or `stale`
+observations. Loading/error/empty/unavailable states suppress numeric fields even
+if values remain in the input object. Explicit stale state allows retention and
+labels it in the strip and details. Zero remains zero; point and percent changes
+are displayed separately and are never calculated from quotes in the browser.
+Missing quotes, changes, dates and comparison periods remain explicit.
+
+The badge shows `LOADING`, `ERROR`, `NO DATA`, `STALE`, `UPDATING`, `SCHEDULED`,
+`DELAYED` or `AVAILABLE`, according to supplied state and actual quote availability.
+It never labels scheduled observations `LIVE`. Quote details show the supplied
+schedule, observation timestamp, original source link and Non-NSE attribution
+where applicable. Unknown schedule/source/date stays unavailable. A refresh flag
+only describes model state; this component does not start requests or a timer.
+The production bootstrap maps connection loading/failure to ticker state; a
+successful bootstrap does not establish market-data availability.
+
+### Interaction inventory and provisional choices
+
+The PNG cannot establish animation, clickable legends or selectable periods.
+Manual scrolling and quote-detail disclosure are documented implementation choices,
+pending exact Figma interaction evidence. No automatic ticker movement is used;
+scrolling is immediate under both motion preferences. The status badge, legends,
+period labels, icons and header remain informational. No speculative date tabs,
+series toggles or refresh buttons are added.
+
+| Surface | Observable behavior | Verification |
+| --- | --- | --- |
+| Skip link | Visible on keyboard focus; Enter focuses indicator content | Layout/panel browser cases; ticker preview equivalent |
+| Ticker strip | Native touch/trackpad scrolling; Left/Right scroll by viewport-relative steps, Home/End reach bounds when strip itself is focused | Four ticker cases, including reduced motion |
+| Quote button | Tab focus indicator; Enter, Space or click toggles details; selecting another quote changes details | Ticker keyboard/pointer checks |
+| Quote details | Shows supplied points/percent change, comparison basis, cadence, source and observation date | Ticker metadata, zero, stale and partial-data checks |
+| Dismissal | Escape or Close dismisses and returns focus to quote; outside pointer or focus dismisses without stealing focus | Ticker dismissal checks |
+| Source links | Native keyboard activation; safe HTTP(S) source URLs open separately with `noopener noreferrer`; unknown/unsafe URLs have no link | Formatter tests; ticker and all panel-preview widths exercise activation |
+| Chart points/bars | Hover or focus shows exact formatted value; Escape dismisses; accessible data table remains available | All six panels at three widths |
+
+### Preview and verification
+
+With Vite running, visit `http://127.0.0.1:5173/__ticker-preview`. Its clearly labeled
+synthetic scenario controls exercise scheduled, delayed, updating, stale, partial,
+loading, error, empty and unavailable presentations. The existing panel preview
+also receives the synthetic ticker. Preview routes and fixture imports are guarded
+by `import.meta.env.DEV` and excluded from production output. Reference instrument
+labels do not establish source coverage; M3 must approve the market catalog/feed.
+
+From `frontend/`:
+
+```powershell
+npm run test:ui
+npm run verify:ticker
+npm run verify:panels
+npm run verify:layout
+npm run build
+```
+
+All **22 component tests** passed; TypeScript/production build passed with no new
+dependencies or lockfile changes. **11 browser cases** passed: four ticker cases
+(1214/390/320px and 390px reduced motion), three populated-panel cases and four
+dashboard/layout/API-failure cases. Ticker cases verify actual Enter/Space/Tab,
+scroll bounds, focus return, source activation, dismissal, zero/missing/stale
+values and all scenario changes. Source activation uses a test-only navigation
+interceptor to avoid visiting fixture URLs. Ticker preview makes no data fetches.
+
+The ticker remains 47px high across states, with no page horizontal overflow,
+uncaught exceptions or initial layout shift in preview cases. The target panel
+grid retains its measured geometry. Evidence defaults to ignored
+`node_modules/.cache/layout-check/ticker/`, including details/stale captures and
+`ticker-report.json`; private review captures/logs stay outside the repository.
+Exact Figma behavior/fidelity, approved sources/cadence and authenticated backend
+updates remain open integration work. M2.5 does not complete the overall module.
 
 ## Local setup
 

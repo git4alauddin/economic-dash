@@ -9,15 +9,16 @@ const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   if (!["--url", "--output", "--browser", "--mode"].includes(key) || !process.argv[index + 1]) {
-    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels.");
+    throw new Error("Use --url <frontend URL>, --output <directory>, --browser <executable>, --mode dashboard|primitives|panels|ticker.");
   }
   options.set(key, process.argv[index + 1]);
 }
 const mode = options.get("--mode") ?? "dashboard";
-if (!["dashboard", "primitives", "panels"].includes(mode)) throw new Error("Unknown verification mode.");
+if (!["dashboard", "primitives", "panels", "ticker"].includes(mode)) throw new Error("Unknown verification mode.");
 const targetUrl = new URL(options.get("--url") ?? "http://127.0.0.1:5173/");
 if (mode === "primitives" && targetUrl.pathname === "/") targetUrl.pathname = "/__ui-preview";
 if (mode === "panels" && targetUrl.pathname === "/") targetUrl.pathname = "/__panel-preview";
+if (mode === "ticker" && targetUrl.pathname === "/") targetUrl.pathname = "/__ticker-preview";
 const url = targetUrl.href;
 const cache = join(frontendRoot, "node_modules/.cache/layout-check");
 const output = resolve(options.get("--output") ?? join(cache, mode === "dashboard" ? "results" : mode));
@@ -132,10 +133,12 @@ try {
     { name: "narrow", width: 390, height: 844 },
     { name: "compact", width: 320, height: 740 },
     ...(mode === "dashboard" ? [{ name: "api-offline", width: 1214, height: 2159, offline: true }] : []),
+    ...(mode === "ticker" ? [{ name: "reduced-motion", width: 390, height: 844, reducedMotion: true }] : []),
   ];
   for (const viewport of viewports) {
     runtimeErrors.length = 0;
     await command("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
+    await command("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: viewport.reducedMotion ? "reduce" : "no-preference" }] });
     if (viewport.offline) {
       if (!fetchUrls.size) throw new Error("No API request observed for the offline check.");
       await command("Network.setBlockedURLs", { urls: [...fetchUrls] });
@@ -143,11 +146,11 @@ try {
     const previousTimeOrigin = await evaluate("performance.timeOrigin");
     const navigation = await command("Page.navigate", { url });
     if (navigation.errorText) throw new Error(navigation.errorText);
-    const readyExpression = mode !== "primitives" ? "document.querySelector('[data-dashboard-root]') && document.querySelector('[data-dashboard-root]').dataset.apiState !== 'loading'" : "document.querySelector('[data-ui-preview]')";
+    const readyExpression = mode === "ticker" ? "document.querySelector('[data-ticker-preview]')" : mode !== "primitives" ? "document.querySelector('[data-dashboard-root]') && document.querySelector('[data-dashboard-root]').dataset.apiState !== 'loading'" : "document.querySelector('[data-ui-preview]')";
     await waitFor(() => evaluate(`Boolean(performance.timeOrigin !== ${previousTimeOrigin} && document.readyState === 'complete' && (${readyExpression}))`), "the new page ready state");
     await evaluate("document.fonts.ready.then(() => true)");
     await delay(150);
-    const inspect = mode !== "primitives" ? inspectLayout : inspectPrimitives;
+    const inspect = mode === "ticker" ? inspectTickerPreview : mode !== "primitives" ? inspectLayout : inspectPrimitives;
     const measurements = await evaluate(`(${inspect.toString()})()`);
     const issues = [];
     if (measurements.viewportWidth !== viewport.width || measurements.viewportHeight !== viewport.height) issues.push("Unexpected CSS viewport");
@@ -155,7 +158,15 @@ try {
     if (measurements.clippedHeadings) issues.push("Heading text is clipped");
     if (measurements.layoutShiftScore > 0.01) issues.push("Unexpected initial layout shift");
     if (runtimeErrors.length) issues.push("Browser JavaScript exceptions");
-    if (mode === "primitives") {
+    if (mode === "ticker") {
+      if (!measurements.fixtureBanner || measurements.quoteCount !== 3 || measurements.tickerHeight !== 47) issues.push("Incomplete/stretched ticker preview");
+      measurements.interactions = await inspectTickerInteractions(command, evaluate, async (name) => {
+        const capture = await command("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+        await writeFile(join(output, `${viewport.name}-${name}.png`), Buffer.from(capture.data, "base64"));
+      });
+      if (Object.values(measurements.interactions).some((passed) => passed !== true)) issues.push("Ticker interaction/state check failed");
+      if (fetchUrls.size) issues.push("Ticker preview must not request market data");
+    } else if (mode === "primitives") {
       if (!measurements.fixtureBanner || measurements.summaryCount !== 6 || measurements.stateCount !== 6 || !measurements.nonNseVisible) issues.push("Incomplete labeled component preview");
       if (measurements.invalidSvg || measurements.clippedSvgText) issues.push("Invalid/clipped SVG geometry or labels");
       const interactions = await inspectTooltip(command, evaluate);
@@ -190,9 +201,17 @@ try {
         if (panels.invalidSvg || panels.clippedSvgText) issues.push("Invalid/clipped panel SVG geometry or text");
         measurements.interactions = await inspectPanelTooltips(command, evaluate);
         if (measurements.interactions.some((entry) => !entry.hover || !entry.focus || !entry.escape)) issues.push("Panel tooltip interaction failed");
+        measurements.sourceLink = await inspectSourceLink(command, evaluate, "[data-panel-id] .source-as-of a");
+        if (!measurements.sourceLink) issues.push("Source link keyboard activation failed");
         await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
       }
     }
+    if (["dashboard", "panels"].includes(mode)) {
+      measurements.skipLink = await inspectSkipLink(command, evaluate, "#dashboard-main");
+      if (!measurements.skipLink) issues.push("Skip link keyboard activation failed");
+      await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
+    }
+    if (runtimeErrors.length && !issues.includes("Browser JavaScript exceptions")) issues.push("Browser JavaScript exceptions");
     const screenshot = await command("Page.captureScreenshot", {
       format: "png", clip: { x: 0, y: 0, width: viewport.width, height: viewport.height, scale: 1 }, captureBeyondViewport: true,
     });
@@ -327,5 +346,145 @@ async function inspectPanelTooltips(command, evaluate) {
     const escape = await evaluate("!document.querySelector('[role=tooltip]')");
     checks.push({ panel: index, hover, focus, escape });
   }
+  return checks;
+}
+
+async function keyPress(command, key, code = key, extra = {}) {
+  const windowsVirtualKeyCode = { Enter: 13, Tab: 9, Escape: 27, " ": 32, End: 35, Home: 36, ArrowLeft: 37, ArrowRight: 39 }[key];
+  const text = key === "Enter" ? "\r" : key === " " ? " " : undefined;
+  await command("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, text, ...extra });
+  await command("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode, ...extra });
+  await delay(35);
+}
+
+async function inspectSkipLink(command, evaluate, target) {
+  await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0); document.querySelector('.skip-link').focus()");
+  await keyPress(command, "Tab");
+  await keyPress(command, "Tab", "Tab", { modifiers: 8 });
+  await evaluate("window.scrollTo(0, 0)");
+  const focus = await evaluate("document.activeElement.matches(':focus-visible') && document.activeElement.getBoundingClientRect().y >= 0");
+  await keyPress(command, "Enter");
+  const activated = await evaluate(`document.activeElement === document.querySelector(${JSON.stringify(target)})`);
+  return focus && activated;
+}
+
+async function inspectSourceLink(command, evaluate, selector) {
+  // Exercise native keyboard activation while preventing navigation to fixture URLs.
+  const ready = await evaluate(`(() => {
+    const link = document.querySelector(${JSON.stringify(selector)});
+    if (!link) return false;
+    window.activatedSource = null;
+    link.addEventListener('click', (event) => { event.preventDefault(); window.activatedSource = link.href; }, { once: true });
+    link.focus();
+    return link.href.startsWith('https://example.com/') && link.target === '_blank' && link.rel.includes('noopener') && link.rel.includes('noreferrer');
+  })()`);
+  await keyPress(command, "Enter");
+  return ready && await evaluate("Boolean(window.activatedSource?.startsWith('https://example.com/'))");
+}
+
+function inspectTickerPreview() {
+  return {
+    viewportWidth: innerWidth, viewportHeight: innerHeight,
+    layoutWidth: document.documentElement.clientWidth,
+    documentWidth: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
+    layoutShiftScore: window.layoutShiftScore,
+    clippedHeadings: [...document.querySelectorAll('h1, h2')].some((node) => node.scrollWidth > node.clientWidth + 1),
+    fixtureBanner: document.querySelector('[data-fixture-banner]')?.textContent.includes('Not financial observations'),
+    tickerHeight: document.querySelector('.market-ticker').getBoundingClientRect().height,
+    quoteCount: document.querySelectorAll('.ticker-quote').length,
+    reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  };
+}
+
+async function inspectTickerInteractions(command, evaluate, capture) {
+  const checks = {};
+  const click = async (selector) => {
+    const point = await evaluate(`(() => {
+      const node = document.querySelector(${JSON.stringify(selector)});
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const box = node.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    })()`);
+    await command("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, ...point });
+    await command("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, ...point });
+    await delay(40);
+  };
+  const scenario = async (name) => {
+    if (await evaluate("Boolean(document.querySelector('.ticker-details'))")) await keyPress(command, "Escape");
+    await click(`[data-scenario="${name}"]`);
+  };
+  checks.skipLink = await inspectSkipLink(command, evaluate, "#ticker-preview-main");
+  await evaluate("window.scrollTo(0, 0); document.querySelector('.ticker-scroll').focus(); document.querySelector('.ticker-scroll').scrollLeft = 0");
+  await keyPress(command, "ArrowRight");
+  const overflow = await evaluate("document.querySelector('.ticker-scroll').scrollWidth > document.querySelector('.ticker-scroll').clientWidth");
+  checks.rightScroll = await evaluate(`!${overflow} || document.querySelector('.ticker-scroll').scrollLeft > 0`);
+  await keyPress(command, "End");
+  checks.endScroll = await evaluate("(() => { const s = document.querySelector('.ticker-scroll'); return Math.abs(s.scrollWidth - s.clientWidth - s.scrollLeft) <= 1; })()");
+  await keyPress(command, "ArrowLeft");
+  checks.leftScroll = await evaluate(`!${overflow} || document.querySelector('.ticker-scroll').scrollLeft < document.querySelector('.ticker-scroll').scrollWidth - document.querySelector('.ticker-scroll').clientWidth`);
+  await keyPress(command, "Home");
+  checks.homeScroll = await evaluate("document.querySelector('.ticker-scroll').scrollLeft === 0");
+  await keyPress(command, "Tab");
+  checks.tabFocus = await evaluate("document.activeElement.matches('.ticker-quote:focus-visible') && getComputedStyle(document.activeElement).outlineStyle !== 'none'");
+  await keyPress(command, "Enter");
+  checks.enterOpen = await evaluate("document.querySelector('.ticker-quote').getAttribute('aria-expanded') === 'true' && Boolean(document.querySelector('.ticker-details'))");
+  if (!checks.enterOpen) throw new Error(`Ticker keyboard open failed: ${JSON.stringify(checks)}; active=${await evaluate("document.activeElement.outerHTML")}`);
+  checks.metadata = await evaluate("(() => { const d = document.querySelector('.ticker-details'); return d.textContent.includes('Synthetic schedule: every 60 seconds; not tick-by-tick') && d.textContent.includes('2 Jan 2025, 10:30:00 UTC') && d.textContent.includes('Non-NSE') && d.textContent.includes('321.12') && d.querySelector('time')?.dateTime === '2025-01-02T10:30:00Z'; })()");
+  checks.detailsBounds = await evaluate("(() => { const d = document.querySelector('.ticker-details'); const b = d.getBoundingClientRect(); return b.x >= 0 && b.right <= document.documentElement.clientWidth && d.scrollWidth <= d.clientWidth + 1; })()");
+  await capture("details");
+  checks.sourceLink = await inspectSourceLink(command, evaluate, ".ticker-details .source-as-of a");
+  await keyPress(command, "Escape");
+  checks.escapeReturn = await evaluate("!document.querySelector('.ticker-details') && document.activeElement.matches('.ticker-quote')");
+  await keyPress(command, " ", "Space");
+  checks.spaceOpen = await evaluate("Boolean(document.querySelector('.ticker-details'))");
+  await click(".ticker-close");
+  checks.closeReturn = await evaluate("!document.querySelector('.ticker-details') && document.activeElement.matches('.ticker-quote')");
+  await keyPress(command, "Enter");
+  await evaluate("document.querySelector('[data-scenario=scheduled]').focus()");
+  await delay(40);
+  checks.focusDismiss = await evaluate("!document.querySelector('.ticker-details')");
+  await click(".ticker-quote");
+  await click(".dashboard-header");
+  checks.outsideDismiss = await evaluate("!document.querySelector('.ticker-details')");
+  await click(".ticker-quote");
+  await click(".ticker-quote");
+  checks.toggleDismiss = await evaluate("!document.querySelector('.ticker-details')");
+  await click(".ticker-quote");
+  await click("[data-instrument-id=synthetic_bank]");
+  checks.selection = await evaluate("document.querySelector('.ticker-details h2').textContent.includes('NIFTY BANK') && document.querySelector('.ticker-details').textContent.includes('-135.60') && document.querySelectorAll('.ticker-quote[aria-expanded=true]').length === 1");
+  await keyPress(command, "Escape");
+  const stableHeight = await evaluate("document.querySelector('.market-ticker').getBoundingClientRect().height");
+  checks.scenarios = true;
+  for (const [name, expected] of [["delayed", "DELAYED"], ["updating", "UPDATING"], ["stale", "STALE"], ["partial", "SCHEDULED"], ["loading", "LOADING"], ["error", "ERROR"], ["empty", "NO DATA"], ["unavailable", "NO DATA"]]) {
+    await scenario(name);
+    const state = await evaluate(`(() => {
+      const quotes = [...document.querySelectorAll('.ticker-value')].map((node) => node.textContent);
+      const hidden = ['loading', 'error', 'unavailable'].includes(${JSON.stringify(name)});
+      return document.querySelector('.market-status').textContent === ${JSON.stringify(expected)} &&
+        (!hidden || quotes.every((value) => value === '—')) &&
+        (${JSON.stringify(name)} !== 'stale' || document.querySelectorAll('.ticker-stale').length === 3) &&
+        (${JSON.stringify(name)} !== 'partial' || quotes[1] === '—' && quotes[2] === '0.00') &&
+        (${JSON.stringify(name)} !== 'empty' || document.querySelectorAll('.ticker-quote').length === 0) &&
+        document.querySelector('.market-ticker').getBoundingClientRect().height === ${stableHeight};
+    })()`);
+    checks.scenarios &&= state;
+    if (name === "stale") {
+      await click(".ticker-quote");
+      checks.retention = await evaluate("document.querySelector('.ticker-details').textContent.includes('Stale quote · retained observation')");
+      await capture("stale");
+    }
+    if (name === "partial") {
+      await click("[data-instrument-id=synthetic_bank]");
+      checks.missingMetadata = await evaluate("(() => { const d = document.querySelector('.ticker-details'); return d.textContent.includes('Quote unavailable') && d.textContent.includes('Source unavailable') && !d.querySelector('time'); })()");
+    }
+  }
+  await scenario("scheduled");
+  await click("[data-instrument-id=synthetic_it]");
+  checks.zeroDetails = await evaluate("document.querySelector('.ticker-details').textContent.includes('No change: 0.00%')");
+  await keyPress(command, "Escape");
+  await evaluate("document.activeElement?.blur(); window.scrollTo(0, 0)");
+  const initialScroll = await evaluate("document.querySelector('.ticker-scroll').scrollLeft");
+  await delay(200);
+  checks.manualMotion = await evaluate(`document.querySelector('.ticker-scroll').scrollLeft === ${initialScroll} && !document.getAnimations().some((animation) => animation.playState === 'running') && getComputedStyle(document.querySelector('.ticker-scroll')).scrollBehavior === 'auto'`);
   return checks;
 }
