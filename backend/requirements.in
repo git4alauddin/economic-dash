@@ -1,3 +1,4 @@
 fastapi
+httpx2==2.13.1
 pydantic-settings
 uvicorn

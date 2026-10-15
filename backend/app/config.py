@@ -67,3 +67,39 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+class CollectorSettings(BaseSettings):
+    """Acquisition limits; scheduling and observation freshness are separate."""
+
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_DIRECTORY / ".env", env_file_encoding="utf-8",
+        env_prefix="COLLECTOR_", extra="ignore", allow_inf_nan=False,
+    )
+
+    user_agent: str = Field(default="EconomicDashboard/0.1 source-collector", min_length=8, max_length=256)
+    connect_timeout: float = Field(default=5, gt=0, le=30)
+    read_timeout: float = Field(default=10, gt=0, le=60)
+    attempt_timeout: float = Field(default=15, gt=0, le=120)
+    total_timeout: float = Field(default=45, gt=0, le=180)
+    max_attempts: int = Field(default=3, ge=1, le=5)
+    min_interval: float = Field(default=1, gt=0, le=60)
+    backoff_base: float = Field(default=0.5, gt=0, le=10)
+    backoff_cap: float = Field(default=5, gt=0, le=30)
+    max_connections: int = Field(default=4, ge=1, le=8)
+    max_bytes: int = Field(default=2_000_000, ge=1, le=25_000_000)
+
+    @field_validator("user_agent")
+    @classmethod
+    def validate_user_agent(cls, value: str) -> str:
+        if any(ord(char) < 32 or ord(char) > 126 for char in value):
+            raise ValueError("Collector User-Agent must contain printable ASCII only.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_budgets(self) -> Self:
+        if self.backoff_base > self.backoff_cap:
+            raise ValueError("Backoff base cannot exceed its cap.")
+        if self.attempt_timeout > self.total_timeout:
+            raise ValueError("Attempt timeout cannot exceed total acquisition timeout.")
+        return self
