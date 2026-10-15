@@ -10,6 +10,10 @@ configuration, development CORS and a placeholder that checks its FastAPI connec
 Local startup, browser rendering, backend configuration tests and frontend builds
 have been verified.
 
+M1.4–M1.6 document the production feasibility baseline, shared contracts and first
+indicator handoff. M1.6 rechecked local HTTP/CORS behavior; source locking and the
+authentic data pipeline remain downstream work.
+
 Dashboard panels, authentic observations, database storage, authentication,
 scheduled collection, full integration QA and deployments remain outstanding.
 
@@ -570,6 +574,89 @@ The bootstrap response is not a health contract or authentic indicator data.
 M4 owns the final health and dashboard routes; M5 owns authentication.
 
 ## Verification and dependency updates
+
+### Local scaffold smoke check — M1.6
+
+Start the API and frontend in separate terminals using the commands above. Run
+this PowerShell check from any directory; it throws if a required check fails:
+
+```powershell
+$apiOrigin = 'http://127.0.0.1:8000'
+$webOrigin = 'http://127.0.0.1:5173'
+$apiResponse = Invoke-WebRequest -Uri "$apiOrigin/" -Headers @{ Origin = $webOrigin } -UseBasicParsing -TimeoutSec 15
+$webResponse = Invoke-WebRequest -Uri "$webOrigin/" -UseBasicParsing -TimeoutSec 15
+if ($apiResponse.StatusCode -ne 200 -or ($apiResponse.Content | ConvertFrom-Json).message -ne 'Economic Indicators API') { throw 'API bootstrap failed' }
+if ($apiResponse.Headers['Access-Control-Allow-Origin'] -ne $webOrigin) { throw 'Frontend origin was not allowed' }
+if ($webResponse.StatusCode -ne 200 -or -not $webResponse.Content.Contains('/src/main.tsx')) { throw 'Vite entrypoint failed' }
+'PASS: API bootstrap, frontend entrypoint and allowed origin'
+```
+
+Open the frontend URL in a browser and confirm the title and “The dashboard is
+coming soon.” ready state. This also checks that browser JavaScript can reach the
+API configured by `VITE_API_BASE_URL`. The HTTP checks passed on 2026-10-15;
+the rendered ready state and configuration-only API URL change were verified in
+M1.3 with the same application code. The root bootstrap route remains the smoke
+endpoint until M4 implements `/health`.
+
+### First authentic indicator handoff — M1.6
+
+The queued slice is **world annual GDP growth**: indicator `gdp_growth`, series
+`gdp_growth_world`, unit `percent_yoy`. It establishes one real observation's path
+through collection, persistence, API and UI before extending the remaining series.
+It does not complete the GDP panel's India series or comparisons.
+
+The reachable source candidate is World Bank World Development Indicators,
+indicator `NY.GDP.MKTP.KD.ZG`, geography `WLD`:
+
+- [Indicator definition and attribution](https://data.worldbank.org/indicator/NY.GDP.MKTP.KD.ZG).
+- [Bounded observation request](https://api.worldbank.org/v2/country/WLD/indicator/NY.GDP.MKTP.KD.ZG?format=json&per_page=5).
+- [Indicator metadata request](https://api.worldbank.org/v2/indicator/NY.GDP.MKTP.KD.ZG?format=json).
+
+Both API requests returned HTTP 200 in the local feasibility probe on 2026-10-15.
+The sample contains five non-null observations with year labels 2021–2025;
+metadata identifies annual growth based on constant-price GDP. Responses were
+saved in the private implementation evidence folder, outside Git. No sample
+values have been embedded in the application, ingested or served by FastAPI.
+
+**Source-lock gate, owned by M3:** audit the required series against
+[NSE's macro publications](https://www.nseindia.com/static/research/publications-reports-nse-market-insights)
+and the M2 design definition before selecting the final source. A reachable World
+Bank endpoint does not establish that NSE lacks suitable data. M3 must record
+coverage, semantic compatibility, extraction feasibility, attribution and the
+fallback reason. If this candidate fails that gate, M3 selects another authentic
+first series and updates this handoff explicitly. Hosted-source access remains
+an M3/M7 check.
+
+| Hop | Owner | Required output and acceptance |
+| --- | --- | --- |
+| Source → validated batch | M3 | Lock the source and definition; validate series/geography, annual period basis, finite decimal values and nulls; retain source URLs, source-year precision and retrieval time. Use bounded requests, timeouts, rate handling and the agreed single scheduler. |
+| Batch → private persistence | M4, consuming M3's batch | Store validated observations and run/provenance metadata with parameterized SQL; repeated runs are idempotent, revisions are traceable and failed refreshes preserve valid rows. Verify a stored observation survives restart. |
+| Persistence → protected API | M4 with M5 | Read stored data through `/api/v1/dashboard` and `/api/v1/indicators/gdp_growth`; expose `gdp_growth_world` using the M1.5 envelope, metadata and state rules. M5 applies bearer authentication; unauthorized access returns 401. A dashboard request never triggers upstream collection. |
+| API → GDP panel | M2 with M5 | Render the world series using its year, unit, source and status; format only for display. Show null as `—`, preserve real zero, distinguish loading/failure/stale states and follow the authenticated polling contract. |
+| Integrated proof | M6; hosted checks with M7 | Trace one displayed observation back through API and database to its source; verify dates/units, protected access, refresh failures and restart persistence. |
+
+M3 must preserve the supplied year label without inventing a day or timestamp;
+confirm the calendar basis before locking the definition. The API's dataset-level
+`lastupdated` is not an observation's publication date. Keep `published_at` null
+unless independently verified, and record retrieval/check times separately.
+Parse numeric source tokens without precision loss and round only in the UI.
+
+Required integrated failure checks, to be implemented by the named owners:
+
+- Timeout, rate limit or malformed source data: M3 records the failure; M4 keeps
+  the last valid observation and reports stale status/reason. With no valid stored
+  observation, return null/unavailable rather than zero.
+- Successful check with no new release: apply M3's documented annual release and
+  freshness policy; the 60-second browser polling interval is not a source TTL.
+- Partial batch: valid series remain usable and failed series carry their own
+  state. M2 may retain previous data only when the API permits retention.
+- API/database outage or expired login: M4/M5 return the agreed safe error;
+  M2 handles unavailable data or clears the session as the contract requires.
+
+The scaffold smoke check is verified. The real-data pipeline and these integrated
+failure checks are queued work for M2–M6; this handoff does not claim them complete.
+
+### Build, configuration tests and dependency updates
 
 From `frontend/`, run `npm run typecheck` or `npm run build`.
 
