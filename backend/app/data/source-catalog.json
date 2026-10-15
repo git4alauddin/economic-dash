@@ -4,11 +4,12 @@
   "checked_on": "2026-10-16",
   "status": "assessed_with_blockers",
   "collection_implemented": false,
+  "history_stage": "M3.5",
   "rules": {
     "selection": "Prefer NSE for the required observation when acquisition and reuse are usable. The fallbacks below are explicit choices, not claims that NSE publishes no macro data.",
     "missing": "Blocked requirements return null/unavailable with their reason_code. No sample values, synthetic substitutions, guessed dates or automatic source switching.",
     "release_discovery": "Concrete release URLs below are verified starting points, not permanent latest URLs. Discover newer releases from official indexes; validate title, period and revision before replacing a source URL.",
-    "history": "Retrieve and validate additional history in M3.5. A reachable release does not establish the entire five-period window or a previous-period comparison.",
+    "history": "M3.5 uses the reviewed bounded history_releases below. Five-period chart windows keep explicit gaps; older CPI revisions retain their trace. India GDP has two comparable FY points; April expenditure fails component reconciliation. Additional/latest release discovery and durable retention remain downstream work.",
     "freshness": "Collector polling and stale thresholds are pending M3.6; preserve source observation precision, publication time when known, and separate retrieval/check times.",
     "release_gate": "Recheck terms and hosted access before enabling a route. No publisher has been contacted and no subscription or permission has been obtained."
   },
@@ -103,6 +104,12 @@
     "commerce_trade_pib": {
       "publisher_id": "commerce", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
       "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2323944",
+      "history_releases": [
+        { "period": "2026-05", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2273044" },
+        { "period": "2026-06", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2284139" },
+        { "period": "2026-07", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2298878" },
+        { "period": "2026-08", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2310636" }
+      ],
       "discovery_url": "https://www.commerce.gov.in/ministryofcommerce/node/5157",
       "locator": "Table 1, Merchandise rows, September 2026 and September 2025 columns, US$ Billion.",
       "limits": "Exclude services estimates and cumulative Table 2. Validate merged headers; total-trade balance is not merchandise balance."
@@ -110,6 +117,11 @@
     "mospi_cpi_pib": {
       "publisher_id": "mospi", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
       "url": "https://www.pib.gov.in/PressReleaseIframePage.aspx?PRID=2322244&lang=2&reg=48",
+      "history_releases": [
+        { "period": "2026-06", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2284125" },
+        { "period": "2026-07", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2298247" },
+        { "period": "2026-08", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2310058" }
+      ],
       "discovery_url": "https://www.mospi.gov.in/latest-releases",
       "locator": "All-India Combined headline CPI year-on-year inflation; identify Combined column, not rural, urban, CPI index level or food inflation.",
       "limits": "Preserve provisional/final distinction. Old-base histories cannot be spliced into base 2024 without a verified bridge."
@@ -131,6 +143,15 @@
     "finance_accounts_pib": {
       "publisher_id": "cga", "delivery_publisher_id": "pib", "reuse_id": "pib", "format": "html", "access": "verified_local",
       "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2317034",
+      "history_releases": [
+        { "period": "2025-08", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2173166" },
+        { "period": "2026-05", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2279444" },
+        { "period": "2026-06", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2294892" },
+        { "period": "2026-07", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2305025" }
+      ],
+      "history_unavailable": [
+        { "period": "2026-04", "reason_code": "published_components_do_not_reconcile", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2267683" }
+      ],
       "discovery_url": "https://www.pib.gov.in/",
       "locator": "Total Expenditure paragraph; Revenue Account and Capital Account amounts, in crore.",
       "limits": "Cumulative provisional actuals, not monthly flows. Prior-year amounts and additional history require separate validated releases."
@@ -173,7 +194,7 @@
       "definition_id": "india_real_gdp_annual_fy_2022_base_v1", "unit": "percent_yoy", "frequency": "annual", "basis": "fiscal",
       "definition": "Annual real GDP growth, constant 2022-23 prices, India April-March FY; preserve PE/FRE and release vintage.",
       "comparison": "Previous comparable FY growth, delta in percentage points; no India-World difference across unlike periods.",
-      "history": "Latest and prior FY growth verified in release text; longer comparable back series pending. Label FY separately from World CY in the M4 projection."
+      "history": "M3.5: two comparable FY growth points; earlier slots unavailable because a base-2022-23 back series is unverified. Prior-FY percentage-point delta uses the paired PE/FRE release. Label FY separately from World CY in M4."
     },
     "gdp_growth_world": {
       "status": "selected", "source_id": "world_bank_gdp", "nse_assessment_id": "gdp_growth_world",
@@ -193,7 +214,7 @@
       "definition_id": "india_merchandise_imports_monthly_usd_v1", "unit": "usd_billion", "frequency": "monthly", "basis": "calendar",
       "definition": "Reported monthly merchandise imports at current USD billions; exclude services and cumulative FY totals.",
       "comparison": "Same month of previous year, percentage change from comparable monetary amounts; not percentage points.",
-      "history": "September 2026 and prior-year month verified. Additional monthly releases must be discovered and validated in M3.5."
+      "history": "M3.5: May-September 2026 and the same months in 2025, acquired from five reviewed releases. Chart window is the latest five monthly periods; YoY change uses the same release's prior-year month."
     },
     "exports": {
       "status": "selected", "source_id": "commerce_trade_pib", "nse_assessment_id": "trade",
@@ -207,7 +228,7 @@
       "definition_id": "india_merchandise_balance_monthly_usd_v1", "unit": "usd_billion", "frequency": "monthly", "basis": "calendar",
       "definition": "Merchandise exports minus imports; a deficit is negative. Not the release's goods-plus-services balance.",
       "inputs": ["exports", "imports"], "transform_id": "exports_minus_imports_v1",
-      "gate": "M3.5: decimal arithmetic, matched month/unit/coverage/vintage, retain both inputs; any missing input gives null."
+      "gate": "M3.5 implemented: exact decimal subtraction, matched month/unit/coverage/vintage/category, retain both full inputs; missing or incompatible inputs yield an explicit gap/null."
     },
     "gst_total": {
       "status": "blocked", "source_id": "gstn_gross", "nse_assessment_id": "gst_collection",
@@ -228,7 +249,7 @@
       "definition_id": "india_cpi_combined_headline_yoy_2024_base_v1", "unit": "percent_yoy", "frequency": "monthly", "basis": "calendar",
       "definition": "All-India Combined headline CPI YoY, base 2024=100, reported monthly; preserve provisional/final status.",
       "comparison": "Previous month reported YoY rate, delta in percentage points, only if same base and comparable vintage.",
-      "history": "Current release and its revised prior month; remaining comparable monthly history is M3.5 work. Do not average monthly YoY rates into an annual CPI measure."
+      "history": "M3.5: May-September 2026, base 2024, using four reviewed releases. Later final values replace provisional values with revision trace retained. Previous-month percentage-point change uses the current release's paired figures; no annual averaging."
     },
     "rbi_target": {
       "status": "blocked", "source_id": "inflation_target_gazette", "nse_assessment_id": "rbi_target",
@@ -240,8 +261,8 @@
       "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
       "definition_id": "union_capital_expenditure_provisional_fy_ytd_v1", "unit": "inr_crore", "frequency": "monthly_cumulative", "basis": "fiscal",
       "definition": "Union government provisional actual capital-account expenditure, April through the named month; not BE or effective capital expenditure.",
-      "comparison": "Same cutoff of prior FY using actual amounts; omit until acquired. COPPY utilisation percentages are not prior-year amounts.",
-      "history": "August 2026 cutoff verified; successive cumulative snapshots are not summed or presented as monthly flows."
+      "comparison": "M3.5: August 2026 versus August 2025 provisional actual amounts, exact percentage change; identical fiscal cutoff/category. COPPY utilisation percentages are not prior-year amounts.",
+      "history": "M3.5: May-August 2026 cumulative cutoffs plus August 2025. April 2026 is unavailable because the published total/components do not reconcile. Never sum successive YTD snapshots or relabel them monthly flows."
     },
     "expenditure_revenue": {
       "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
@@ -254,7 +275,7 @@
       "status": "selected", "source_id": "finance_accounts_pib", "nse_assessment_id": "government_expenditure",
       "definition_id": "union_total_expenditure_provisional_fy_ytd_v1", "unit": "inr_crore", "frequency": "monthly_cumulative", "basis": "fiscal",
       "definition": "Published Union total expenditure, same provisional actual period as revenue and capital; reconcile all three on source precision.",
-      "comparison": "Same cutoff of prior FY using actual amounts, percentage growth only after comparability verification.",
+      "comparison": "M3.5: August 2026 versus August 2025 provisional actual amounts, exact percentage change on matching fiscal cutoffs/categories.",
       "history": "Supplied total for each cumulative cutoff, no frontend calculation and no annual relabelling."
     },
     "nifty_bank": {

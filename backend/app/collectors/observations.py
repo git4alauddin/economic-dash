@@ -2,7 +2,7 @@
 
 import calendar
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 import re
 from typing import Literal, Self
 
@@ -135,6 +135,8 @@ class NormalizedObservation(ImmutableModel):
     source_unit: str
     normalization_id: str = "identity_v1"
     dataset_updated_at: date | None = None
+    transform_id: Literal["exports_minus_imports_v1"] | None = None
+    inputs: tuple["NormalizedObservation", ...] = ()
 
     @field_validator("value", mode="before")
     @classmethod
@@ -163,15 +165,31 @@ class NormalizedObservation(ImmutableModel):
         expected_as_of = self.observation_period.end.strftime("%Y" if self.as_of_precision == "year" else "%Y-%m")
         if self.as_of != expected_as_of or (self.observation_period.frequency == "annual") != (self.as_of_precision == "year"):
             raise ValueError("As-of precision must match the source period.")
-        if (self.value is None and (self.quality_status != "missing" or self.reason_code != "source_value_missing")) or (self.value is not None and (self.quality_status != "valid" or self.reason_code is not None)):
+        missing_reason = "derived_input_missing" if self.transform_id else "source_value_missing"
+        if (self.value is None and (self.quality_status != "missing" or self.reason_code != missing_reason)) or (self.value is not None and (self.quality_status != "valid" or self.reason_code is not None)):
             raise ValueError("Missing values require explicit quality/reason metadata.")
         if self.value is not None:
             if self.unit == "percent_yoy" and not Decimal(-100) <= self.value <= Decimal(1000):
                 raise ValueError("Growth/inflation outside supported review bounds.")
-            if self.unit in {"inr_crore", "usd_billion", "index_points", "percent_of_gdp"} and not Decimal(0) <= self.value <= Decimal("1e12"):
+            lower = Decimal("-1e12") if self.transform_id else Decimal(0)
+            if self.unit in {"inr_crore", "usd_billion", "index_points", "percent_of_gdp"} and not lower <= self.value <= Decimal("1e12"):
                 raise ValueError("Amount/ratio outside supported bounds.")
         if self.dataset_updated_at and self.dataset_updated_at > self.retrieved_at.date():
             raise ValueError("Future dataset revision date.")
+        if self.transform_id:
+            if self.series_id != "trade_balance" or self.indicator_id != "trade" or self.definition_id != "india_merchandise_balance_monthly_usd_v1" or self.unit != "usd_billion" or self.normalization_id != self.transform_id or len(self.inputs) != 2:
+                raise ValueError("Unsupported derived observation.")
+            exports, imports = self.inputs
+            for point, series in zip(self.inputs, ("exports", "imports")):
+                if point.series_id != series or point.definition_id != f"india_merchandise_{series}_monthly_usd_v1" or point.inputs or point.transform_id or point.observation_period != self.observation_period or point.unit != self.unit or point.vintage_id != self.vintage_id or point.revision_kind != self.revision_kind or point.sources != self.sources or point.published_at != self.published_at or point.retrieved_at > self.retrieved_at:
+                    raise ValueError("Derived inputs must have aligned definitions, periods and release vintage.")
+            with localcontext() as context:
+                context.prec = 80
+                expected = exports.value - imports.value if exports.value is not None and imports.value is not None else None
+            if self.value != expected:
+                raise ValueError("Trade balance must equal exports minus imports, including missing inputs.")
+        elif self.inputs or self.series_id == "trade_balance":
+            raise ValueError("Derived series require a versioned transform and input references.")
         return self
 
 

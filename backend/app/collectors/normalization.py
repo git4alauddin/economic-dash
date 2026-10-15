@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .adapters import SourcePayloads
     from .http_client import FetchResult
 
-PARSER_VERSION = "m3-normalization-v1"
+PARSER_VERSION = "m3-normalization-v2"
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -190,6 +190,8 @@ def cpi(root, _title: str):
         if "CPI (General)" not in text or "Inflation (%)" not in text or "Combined" not in text:
             continue
         grid = table_grid(table)
+        if len(grid[0]) == 5:  # Separate previous-month annex; the paired table supplies that month.
+            continue
         data_index = unique([index for index, row in enumerate(grid) if row[:2] == ["Inflation (%)", "CPI (General)"]], "headline CPI inflation row")
         headings = grid[:data_index]
         geography = unique([tuple(row) for row in headings if row.count("Combined") == 2], "CPI geography header")
@@ -209,9 +211,9 @@ def cpi(root, _title: str):
 
 
 def expenditure(root, title: str):
-    cutoff = unique(re.findall(r"upto (?:the month of )?([A-Za-z]+),?\s+(\d{4})", root.text(), re.I), "expenditure cutoff")
+    cutoff = unique(re.findall(r"(?:upto (?:the month of )?|for )([A-Za-z]+),?\s+(\d{4})", root.text(), re.I), "expenditure cutoff")
     period = monthly_period(int(cutoff[1]), MONTHS[cutoff[0].lower()], cumulative=True)
-    if "Union Government" not in title or period.id.split(":")[0][2:] not in title:
+    if not re.search(r"(?:Union Government(?: of India)?|Government of India)", title, re.I) or period.id.split(":")[0][2:] not in title:
         raise ValueError("Wrong government coverage or fiscal year.")
     rupee = r"(?:₹|Rs\.?)[\s]*"
     unit = r"(lakh crore|crore)"
@@ -255,7 +257,10 @@ class SourceNormalizer:
         source_id = bundle.source_id
         self.registry.resolve(source_id)  # Disabled feeds cannot bypass the gate via fixtures.
         try:
-            self._check_response(bundle.payload, source_id)
+            resource_id = bundle.payload.source_id
+            if resource_id not in self.registry.observation_resources(source_id):
+                raise ParseError(source_id, "source_identity_mismatch")
+            self._check_response(bundle.payload, resource_id)
             expected_metadata = f"{source_id}.metadata" in self.registry.resources
             if expected_metadata != (bundle.metadata is not None):
                 raise ParseError(source_id, "source_metadata_mismatch")
@@ -269,6 +274,8 @@ class SourceNormalizer:
                 root, title, published = pib_release(bundle, ministry)
                 points = parser(root, title)
                 dataset_updated, more_pages = None, False
+            if resource_id != source_id and max(point.period.end for point in points).strftime("%Y-%m") != resource_id.rsplit(".", 1)[-1]:
+                raise ParseError(source_id, "history_release_period_mismatch")
             profile = self.catalog["sources"][source_id]
             publisher = self.publishers[profile["publisher_id"]]
             name = publisher["name"] + (" (via PIB)" if profile.get("delivery_publisher_id") == "pib" else "")

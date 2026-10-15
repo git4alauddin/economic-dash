@@ -148,6 +148,20 @@ function verifySources(series) {
     assert.ok(["json", "html", "pdf"].includes(source.format), `${id}: format`);
     assert.ok(["verified_local", "verified_web", "blocked_tls", "page_only"].includes(source.access), `${id}: access status`);
     text(source.limits, `${id}: limitations`);
+    const historyPeriods = new Set();
+    assert.ok((source.history_releases ?? []).length <= 24, `${id}: unbounded history`);
+    for (const release of source.history_releases ?? []) {
+      publicUrl(release.url);
+      assert.equal(source.delivery_publisher_id, "pib", `${id}: unreviewed history publisher`);
+      assert.equal(new URL(release.url).hostname, new URL(source.url).hostname, `${id}: history host changed`);
+      assert.ok(/^\d{4}-(0[1-9]|1[0-2])$/.test(release.period) && !historyPeriods.has(release.period), `${id}: invalid/duplicate history period`);
+      historyPeriods.add(release.period);
+    }
+    for (const gap of source.history_unavailable ?? []) {
+      publicUrl(gap.url);
+      text(gap.reason_code, `${id}: historical gap reason`);
+      assert.ok(!historyPeriods.has(gap.period), `${id}: rejected period cannot be enabled`);
+    }
   }
   const expected = [...series.keys(), ...catalog.ticker.instruments.map((item) => item.instrument_id), ...catalog.unbound_requirements.map((item) => item.id)];
   same(Object.keys(sources.requirements), expected, "Every series, quote and unbound statistic needs a source decision");
@@ -201,7 +215,7 @@ function verifySources(series) {
   }
   same(catalog.source_gate.selected_source_ids, [...selected], "Source gate and decisions disagree");
   console.log(`PASS source decisions: ${expected.length - blocked} selected/derived, ${blocked} explicitly unavailable; ${selected.size} selected routes`);
-  console.log("History backfill, parsing, freshness, hosted access and blocked-source clearance remain downstream work.");
+  console.log("M3.5 bounded history routes verified; scheduling, freshness, hosted access and blocked-source clearance remain open.");
 }
 
 async function probeSources() {
