@@ -1,6 +1,6 @@
-"""Private SQLite bootstrap and short-lived connections, without domain tables.
+"""Private SQLite bootstrap, schema migrations and short-lived connections.
 
-M4.2 owns ordered transactional migrations using PRAGMA user_version (currently 0).
+Ordered transactional migrations use PRAGMA user_version and a checksum ledger.
 Run bootstrap at service startup or with `python -m app.database`, never at build
 time: Render disks are runtime-only. M7 must verify the /var/data mount survives
 redeploys, one instance/worker, service-user permissions and no HTTP file serving.
@@ -16,8 +16,7 @@ import sqlite3
 from typing import Iterator
 
 from app.config import DatabaseSettings, get_database_settings, get_settings
-
-SCHEMA_VERSION = 0  # Domain DDL and forward-only migrations begin in M4.2.
+from app.migrations import SCHEMA_VERSION, migrate
 
 
 class Database:
@@ -55,14 +54,12 @@ class Database:
                 if path.exists():
                     path.chmod(0o600)
         with self.connection() as connection:
-            version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version != SCHEMA_VERSION:
-                raise RuntimeError("Unsupported database schema version; migration is required.")
             mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             if mode != "wal":
                 raise RuntimeError("Database must support WAL on a local persistent disk.")
             if [row[0] for row in connection.execute("PRAGMA quick_check")] != ["ok"]:
                 raise RuntimeError("Database integrity check failed.")
+            migrate(connection)
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:

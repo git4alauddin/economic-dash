@@ -45,7 +45,7 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             DatabaseSettings(_env_file=None, app_env="production", directory=self.directory)
 
-    def test_repeatable_bootstrap_has_no_domain_tables_and_sets_connection_policy(self):
+    def test_repeatable_bootstrap_has_empty_domain_tables_and_sets_connection_policy(self):
         self.database.bootstrap()
         self.database.bootstrap()
         with self.database.connection() as connection:
@@ -54,8 +54,8 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
             self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 50)
             self.assertEqual(connection.execute("PRAGMA trusted_schema").fetchone()[0], 0)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 0)
-            self.assertEqual(connection.execute("SELECT name FROM sqlite_schema WHERE type='table'").fetchall(), [])
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT count(*) FROM observations").fetchone()[0], 0)
         with self.assertRaises(sqlite3.ProgrammingError):
             connection.execute("SELECT 1")
 
