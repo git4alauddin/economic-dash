@@ -27,7 +27,7 @@ class ApiError(Exception):
         self.status, self.code, self.message, self.headers = status, code, message, headers
 
 
-bearer = HTTPBearer(auto_error=False, scheme_name="DashboardBearer", description="M5-verified bearer token required. Authentication is not configured in M4.")
+bearer = HTTPBearer(auto_error=False, scheme_name="DashboardBearer", description="JWT access token. Dashboard route authorization wiring follows in M5.4.")
 
 
 def require_dashboard_access(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:

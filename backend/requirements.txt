@@ -16,6 +16,7 @@ pycparser==3.11          # via cffi
 pydantic==2.14.1          # via fastapi, pydantic-settings
 pydantic-core==2.50.1     # via pydantic
 pydantic-settings==2.16.0  # via -r requirements.in
+PyJWT==2.15.1            # via -r requirements.in
 python-dotenv==1.2.4      # via pydantic-settings
 starlette==1.8.0          # via fastapi
 truststore==0.10.5 ; sys_platform != 'emscripten'  # via httpcore2, httpx2
