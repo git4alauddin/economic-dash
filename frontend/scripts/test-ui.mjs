@@ -441,6 +441,54 @@ try {
     assert.equal(result.view.phase, "error");
     assert.equal(result.view.snapshot, null);
   });
+  await test("repeated API failures bound diagnostic state and recover with a full validated representation", async () => {
+    let failure = false;
+    const reader = client.createDashboardReader(async (_url, options) => {
+      if (failure) return new Response(null, { status: 503 });
+      assert.equal(options.headers["If-None-Match"], undefined);
+      return new Response(JSON.stringify(dashboardFixture()), { headers: { ETag: '"recovered"' } });
+    });
+    const signal = new AbortController().signal;
+    const first = await reader.read(signal, "token"); failure = true;
+    let failed;
+    for (let i = 0; i < 100; i++) failed = await reader.read(signal, "token");
+    assert.equal(failed.view.snapshot.issues.length, first.view.snapshot.issues.length + 1);
+    assert.equal(failed.view.snapshot.panels.gdp_growth.summaries[0].state, "stale");
+    failure = false;
+    const recovered = await reader.read(signal, "token");
+    assert.equal(recovered.view.snapshot.panels.gdp_growth.summaries[0].state, "fresh");
+    assert.deepEqual(recovered.view.snapshot.issues, first.view.snapshot.issues);
+  });
+  await test("partial invalid API series retain permitted prior values while valid neighbors update; validators are dropped", async () => {
+    const original = dashboardFixture(), invalid = dashboardFixture(), recovered = dashboardFixture();
+    invalid.data.panels.gdp_growth.series.gdp_growth_world.latest.value = "NaN";
+    invalid.data.panels.gdp_growth.series.gdp_growth_india.latest.value = "1.2345";
+    let calls = 0;
+    const reader = client.createDashboardReader(async (_url, options) => {
+      if (calls === 2) assert.equal(options.headers["If-None-Match"], undefined);
+      return new Response(JSON.stringify([original, invalid, recovered][calls++]), { headers: { ETag: '"one"' } });
+    });
+    const signal = new AbortController().signal;
+    const first = await reader.read(signal, "token"), partial = await reader.read(signal, "token");
+    const old = first.view.snapshot.observations.gdp_growth.gdp_growth_world.latest;
+    const retained = partial.view.snapshot.observations.gdp_growth.gdp_growth_world.latest;
+    assert.equal(retained.value, old.value); assert.equal(retained.status, "stale");
+    assert.deepEqual(retained.sources, old.sources); assert.deepEqual(retained.as_of, old.as_of);
+    assert.equal(partial.view.snapshot.panels.gdp_growth.summaries[0].value, "1.2345");
+    assert.equal(partial.view.snapshot.panels.gdp_growth.summaries[0].state, "fresh");
+    assert.equal((await reader.read(signal, "token")).view.snapshot.panels.gdp_growth.summaries[1].state, "fresh");
+    const prohibited = adapter.adaptDashboard(dashboardFixture(false));
+    assert.equal(state.acceptDashboard(invalid, prohibited).snapshot.panels.gdp_growth.summaries[1].value, null);
+  });
+  await test("invalid history retains only permitted history, whereas an explicit empty history stays empty", () => {
+    const previous = adapter.adaptDashboard(dashboardFixture()), raw = dashboardFixture();
+    raw.data.panels.gdp_growth.series.gdp_growth_world.history.points[0].value = "NaN";
+    const partial = state.acceptDashboard(raw, previous).snapshot.observations.gdp_growth.gdp_growth_world;
+    assert.equal(partial.latest.status, "fresh"); assert.equal(partial.history.status, "stale");
+    assert.equal(partial.history.points[0].value, previous.observations.gdp_growth.gdp_growth_world.history.points[0].value);
+    raw.data.panels.gdp_growth.series.gdp_growth_world.history = { status: "empty", points: [], truncated: false };
+    assert.deepEqual(state.acceptDashboard(raw, previous).snapshot.observations.gdp_growth.gdp_growth_world.history.points, []);
+  });
   await test("polling coalesces overlap and schedules the next check after sixty seconds", async () => {
     let calls = 0, release;
     const jobs = new Map(), views = [];

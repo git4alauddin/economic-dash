@@ -13,7 +13,7 @@ export default function PanelMetadata({ data, explorer }: { data?: PanelPresenta
       <summary aria-label="Series details, history tables and sources">Series details</summary>
       <div className="panel-data-popover" tabIndex={0} role="region" aria-label="Series details and history tables">
         {data.detail && <p>{data.detail}</p>}
-        {explorer && selection && <div className="panel-history-controls" aria-busy={selection.loading || selection.catalogLoading}>
+        {explorer && selection && <div className="panel-history-controls" aria-busy={selection.loading || selection.catalogLoading || selection.refreshing}>
           <p role="status">{selection.catalogLoading ? "Loading available periods…" : selection.message}</p>
           {selection.choices && <>
             <label>History window <select aria-label="History window" value={selection.window} onChange={(event) => { void explorer.controller.select(Number(event.target.value), selection.periods); }}>

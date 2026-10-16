@@ -15,7 +15,7 @@ function SessionScreen() {
       </div>
     </nav>
     <p className="dashboard-feedback">{snapshot.dashboard.message}</p>
-    <DashboardScreen view={snapshot.dashboard} readIndicator={session.readIndicator} />
+    <DashboardScreen view={snapshot.dashboard} readIndicator={session.readIndicator} refreshSequence={snapshot.refreshSequence} />
   </>;
 }
 

@@ -21,6 +21,8 @@ const pending = new Map(), requests = [], network = [], statuses = [], errors = 
 const dashboardRequests = new Set(), dashboardBodies = [], captures = [];
 const indicatorRequests = new Map(), indicatorBodies = [];
 const runtimeErrors = new Map();
+let captureUpdates = false;
+let apiFault = null;
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await probe()) return; await delay(50); }
@@ -58,6 +60,17 @@ try {
   let id = 0;
   socket.addEventListener("message", ({ data }) => {
     const item = JSON.parse(data);
+    if (item.method === "Fetch.requestPaused") {
+      const requestId = item.params.requestId;
+      const reply = apiFault === "503" && item.params.request.method === "GET"
+        ? command("Fetch.fulfillRequest", { requestId, responseCode: 503, responseHeaders: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "Access-Control-Allow-Origin", value: `http://127.0.0.1:${config.frontend_port}` },
+          { name: "Cache-Control", value: "no-store" },
+        ], body: Buffer.from('{"error":{"code":"service_unavailable"}}').toString("base64") })
+        : command("Fetch.continueRequest", { requestId });
+      void reply.catch(() => { errors.push("Private API failure injection failed"); });
+    }
     if (item.method === "Runtime.exceptionThrown") {
       const detail = item.params.exceptionDetails;
       runtimeErrors.set(detail.exceptionId, { text: detail.text, kind: detail.exception?.className,
@@ -75,7 +88,7 @@ try {
       statuses.push(item.params.response.status);
       // Only the first full response is needed for the source trace. Later
       // responses can disappear during intentional reload/logout/cancellation.
-      if (item.params.response.status === 200 && captures.length === 0) dashboardRequests.add(item.params.requestId);
+      if (item.params.response.status === 200 && (captureUpdates || captures.length === 0)) dashboardRequests.add(item.params.requestId);
     }
     if (item.method === "Network.loadingFinished" && dashboardRequests.delete(item.params.requestId)) {
       captures.push(command("Network.getResponseBody", { requestId: item.params.requestId }).then((result) => {
@@ -112,7 +125,8 @@ try {
   const dashboard = () => visible(`!!document.querySelector('[data-dashboard-root]') && !!Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Refresh data'&&!b.disabled)`, "loaded dashboard");
   const control = async (action) => {
     process.stdout.write(JSON.stringify({ control: action }) + "\n");
-    assert.equal(JSON.parse((await lines.next()).value).ok, true);
+    const reply = JSON.parse((await lines.next()).value);
+    assert.equal(reply.ok, true); return reply;
   };
   const assertWorldTrace = async (expectedState) => {
     const expected = config.world_trace;
@@ -193,6 +207,7 @@ try {
         assert.equal(selected.body.data.series[sid].latest.observation_period.id, period);
         await assertPanelBinding(id, selected.body.data);
         await click("Refresh data"); await dashboard();
+        await visible(`document.querySelector('${selector} .panel-history-controls').getAttribute('aria-busy')==='false'`, `${id} selected refresh finished`);
         assert.equal(await evaluate(`document.querySelector('${selector} [data-period-series="${sid}"]').value`), period, "Latest poll overwrote historical selection");
         await assertPanelBinding(id, selected.body.data);
       }
@@ -254,6 +269,26 @@ try {
   assert.equal(world.as_of_precision, "year");
   await assertWorldTrace(world.status);
   await verifyPanelInteractions(dashboardBodies[0].data.panels);
+  captureUpdates = true;
+  const scheduledVersions = new Set();
+  for (const action of ["source_timeout", "source_invalid", "source_recover"]) {
+    const reply = await control(action), count = dashboardBodies.length;
+    if (reply.trace) config.world_trace = reply.trace;
+    await click("Refresh data"); await dashboard();
+    await waitFor(() => dashboardBodies.length > count, `${action} API representation`);
+    const body = dashboardBodies.at(-1), point = body.data.panels.gdp_growth.series.gdp_growth_world.latest;
+    assert.equal(point.value, config.world_trace.value);
+    assert.deepEqual(point.sources, config.world_trace.sources);
+    assert.equal(point.as_of, config.world_trace.year);
+    assert.equal(point.status, action === "source_recover" ? "fresh" : "stale");
+    assert.equal(point.failure_state_persisted, true);
+    if (action === "source_timeout") assert.equal(point.reason_code, "timeout");
+    if (action === "source_invalid") assert.equal(point.reason_code, "invalid_source_payload");
+    scheduledVersions.add(body.meta.data_version);
+    await assertWorldTrace(point.status);
+  }
+  assert.equal(scheduledVersions.size, 3, "Scheduled failure/recovery did not advance durable checkpoint versions");
+  captureUpdates = false;
   assert.equal(await evaluate(`document.querySelector('.indicator-grid').children.length`), 6);
   assert.ok(await evaluate(`document.querySelectorAll('a[href^="https://"]').length>0`), "Real publisher attribution was lost");
   assert.equal((await command("Network.getCookies")).cookies.length, 0);
@@ -262,16 +297,38 @@ try {
   await command("Emulation.setDeviceMetricsOverride", { width: 1214, height: 2159, deviceScaleFactor: 1, mobile: false });
   await click("Refresh data"); await dashboard();
   await waitFor(() => statuses.includes(304), "conditional refresh");
+  // Keep an explicit historical query active through API and network failures.
+  await evaluate(`document.querySelector('[data-panel-id="gdp_growth"] .panel-data-details').open=true`);
+  await visible(`!!document.querySelector('[data-period-series="gdp_growth_world"]')`, "World period control");
+  await evaluate(`(() => { const select=document.querySelector('[data-period-series="gdp_growth_world"]');select.value=${JSON.stringify(config.world_trace.period.id)};select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.startsWith('Selected history.')`, "selected query active");
+  await command("Fetch.enable", { patterns: [
+    { urlPattern: `${config.api_url}/api/v1/dashboard*`, requestStage: "Request" },
+    { urlPattern: `${config.api_url}/api/v1/indicators/*`, requestStage: "Request" },
+  ] });
+  apiFault = "503";
+  await click("Refresh data"); await dashboard();
+  await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.includes('refresh failed')`, "selected API 503 retention");
+  assert.ok(statuses.includes(503), "Injected API failure did not reach the browser as HTTP 503");
+  await assertWorldTrace("stale");
+  assert.equal(await evaluate(`document.querySelector('[data-period-series="gdp_growth_world"]').value`), config.world_trace.period.id);
+  apiFault = null; await command("Fetch.disable");
+  await click("Refresh data"); await dashboard();
+  await visible(`document.querySelector('[data-panel-id="gdp_growth"] .panel-history-controls').getAttribute('aria-busy')==='false'`, "selected API recovery");
+  await assertWorldTrace("fresh");
   const loginCount = requests.filter((r) => r.url.endsWith("/auth/login")).length;
   await command("Network.setBlockedURLs", { urls: [`${config.api_url}/*`] });
   await click("Refresh data");
   await visible(`document.querySelector('.dashboard-feedback')?.textContent.includes('stale')`, "offline retained state");
+  await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.includes('refresh failed')`, "selected offline retention");
   assert.ok(await evaluate(`!!document.querySelector('[data-dashboard-root]')`));
   await assertWorldTrace("stale");
   assert.equal(requests.filter((r) => r.url.endsWith("/auth/login")).length, loginCount, "Password was replayed after a data error");
   await command("Network.setBlockedURLs", { urls: [] });
   await click("Refresh data"); await dashboard();
+  await visible(`document.querySelector('[data-panel-id="gdp_growth"] .panel-history-controls').getAttribute('aria-busy')==='false'`, "selected offline recovery");
   await assertWorldTrace(world.status);
+  await evaluate(`Array.from(document.querySelectorAll('[data-panel-id="gdp_growth"] button')).find(button=>button.textContent==='Latest view').click()`);
   await click("Sign out");
   await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, "logout clears data");
   const beforeSignIn = requests.length;
@@ -305,7 +362,8 @@ try {
   process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 10, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
     network_boundary_verified: true, world_source_sql_api_ui_verified: true,
-    world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true }) + "\n");
+    world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true,
+    scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

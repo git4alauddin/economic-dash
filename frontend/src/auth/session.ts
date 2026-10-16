@@ -9,6 +9,7 @@ export interface SessionSnapshot {
   message: string;
   dashboard: DashboardView;
   refreshing: boolean;
+  refreshSequence: number;
 }
 interface Timers { schedule(callback: () => void, delay: number): unknown; cancel(handle: unknown): void; }
 const messages = {
@@ -22,7 +23,7 @@ export function createAuthSession({ transport, now = Date.now, timers = {
   schedule: (callback: () => void, delay: number) => globalThis.setTimeout(callback, delay),
   cancel: (handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
 } }: { transport?: DashboardTransport; now?: () => number; timers?: Timers } = {}) {
-  let snapshot: SessionSnapshot = { phase: "signed-out", user: null, message: "", dashboard: initialDashboardView, refreshing: false };
+  let snapshot: SessionSnapshot = { phase: "signed-out", user: null, message: "", dashboard: initialDashboardView, refreshing: false, refreshSequence: 0 };
   const listeners = new Set<() => void>();
   let generation = 0, expiresAt = 0, expiryTimer: unknown = null;
   let pendingLogin: AbortController | null = null;
@@ -35,7 +36,7 @@ export function createAuthSession({ transport, now = Date.now, timers = {
     polling?.stop(); polling = null; expiresAt = 0;
     if (expiryTimer !== null) timers.cancel(expiryTimer);
     expiryTimer = null;
-    publish({ phase: "signed-out", user: null, message, dashboard: initialDashboardView, refreshing: false });
+    publish({ phase: "signed-out", user: null, message, dashboard: initialDashboardView, refreshing: false, refreshSequence: 0 });
   }
   function checkExpiry() {
     if (snapshot.phase === "signed-in" && now() >= expiresAt) end("Your session expired. Please sign in again.");
@@ -59,12 +60,12 @@ export function createAuthSession({ transport, now = Date.now, timers = {
       if (id !== generation || controller.signal.aborted) return;
       expiresAt = Math.min(grant.expiresAt, now() + grant.lifetimeMs);
       token = grant.token;
-      publish({ phase: "signed-in", user: grant.user, message: "", dashboard: initialDashboardView, refreshing: true });
+      publish({ phase: "signed-in", user: grant.user, message: "", dashboard: initialDashboardView, refreshing: true, refreshSequence: 0 });
       expireWhenDue(id);
       polling = startDashboardPolling(grant.token, (dashboard) => {
         if (id !== generation || snapshot.phase !== "signed-in") return;
         checkExpiry();
-        if (id === generation && snapshot.phase === "signed-in") publish({ ...snapshot, dashboard, refreshing: false });
+        if (id === generation && snapshot.phase === "signed-in") publish({ ...snapshot, dashboard, refreshing: false, refreshSequence: snapshot.refreshSequence + 1 });
       }, { transport, timers, onUnauthorized: () => { if (id === generation) end("Your session ended. Please sign in again."); } });
     } catch (error) {
       if (id === generation && !controller.signal.aborted) end(messages[error instanceof SignInError ? error.kind : "network"]);

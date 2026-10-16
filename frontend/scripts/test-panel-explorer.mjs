@@ -85,4 +85,62 @@ try {
     assert.equal(explorer.getSnapshot().choices, null);
     await explorer.open(); assert.ok(explorer.getSnapshot().choices); explorer.dispose();
   });
+  await test("selected refresh retains only permitted values with original periods, dates and sources", async () => {
+    const original = panel("2024");
+    original.data.series.gdp_growth_india.latest.retention_allowed = false;
+    original.data.series[sid].history.points[0].retention_allowed = false;
+    let failure = false, calls = 0;
+    const explorer = createPanelExplorer(id, async (path) => {
+      if (path.startsWith("/indicators?")) return catalog();
+      calls++; if (failure) throw Error("offline"); return structuredClone(original);
+    });
+    await explorer.open(); await explorer.select(10, { [sid]: "2024" });
+    const before = explorer.getSnapshot().data;
+    failure = true; await explorer.refresh();
+    const state = explorer.getSnapshot(), after = state.data;
+    assert.equal(after.summaries[1].value, before.summaries[1].value); assert.equal(after.summaries[1].state, "stale");
+    assert.equal(after.summaries[0].value, null); assert.equal(after.summaries[0].state, "unavailable");
+    assert.deepEqual(after.seriesDetails[1].asOf, before.seriesDetails[1].asOf);
+    assert.deepEqual(after.seriesDetails[1].sources, before.seriesDetails[1].sources);
+    assert.equal(after.seriesDetails[1].history[0].value, null);
+    assert.deepEqual(state.periods, { [sid]: "2024" }); assert.equal(state.window, 10);
+    assert.match(state.message, /stale/); assert.equal(calls, 2);
+    failure = false; await explorer.refresh();
+    assert.equal(explorer.getSnapshot().data.summaries[1].state, "fresh"); explorer.dispose();
+    assert.equal(explorer.getSnapshot().data, null); assert.deepEqual(explorer.getSnapshot().periods, {});
+  });
+  await test("refresh coalesces overlapping reads, keeps visible values and cannot overwrite a newer selection", async () => {
+    let next = null, requestSignal, calls = 0;
+    const explorer = createPanelExplorer(id, async (path, signal) => {
+      if (path.startsWith("/indicators?")) return catalog();
+      calls++; requestSignal = signal; return next ? next.promise : panel("2024");
+    });
+    await explorer.open(); await explorer.select(10, { [sid]: "2024" });
+    const before = explorer.getSnapshot().data; next = deferred();
+    const first = explorer.refresh(), overlap = explorer.refresh();
+    assert.equal(calls, 2); assert.equal(explorer.getSnapshot().data, before); assert.equal(explorer.getSnapshot().refreshing, true);
+    await explorer.select(5, {}); assert.equal(requestSignal.aborted, true);
+    next.resolve(panel("2024")); await Promise.all([first, overlap]);
+    assert.equal(explorer.getSnapshot().data, null); assert.equal(explorer.getSnapshot().refreshing, false);
+    explorer.dispose();
+  });
+  await test("invalid selected refresh stays stale; valid empty history and unavailable results remain distinct", async () => {
+    let response = panel("2024");
+    const explorer = createPanelExplorer(id, async (path) => path.startsWith("/indicators?") ? catalog() : structuredClone(response));
+    await explorer.open(); await explorer.select(10, { [sid]: "2024" });
+    const value = explorer.getSnapshot().data.summaries[1].value;
+    response.data.series[sid].latest.value = "NaN"; await explorer.refresh();
+    assert.equal(explorer.getSnapshot().data.summaries[1].value, value);
+    assert.equal(explorer.getSnapshot().data.summaries[1].state, "stale");
+    assert.match(explorer.getSnapshot().data.detail, /validation failed/);
+    response = panel("2024"); response.data.chart = null;
+    for (const series of Object.values(response.data.series)) series.history = { status: "empty", points: [], truncated: false };
+    await explorer.refresh();
+    assert.equal(explorer.getSnapshot().data.summaries[1].state, "fresh");
+    assert.deepEqual(explorer.getSnapshot().data.seriesDetails[1].history, []);
+    for (const series of Object.values(response.data.series)) { series.latest.value = null; series.latest.status = "unavailable"; }
+    await explorer.refresh();
+    assert.equal(explorer.getSnapshot().data.summaries[1].value, null);
+    assert.equal(explorer.getSnapshot().data.summaries[1].state, "unavailable"); explorer.dispose();
+  });
 } finally { await server.close(); }

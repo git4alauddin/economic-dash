@@ -74,7 +74,7 @@ export async function readDashboard(signal: AbortSignal, token: string, transpor
   return result.body;
 }
 export async function loadDashboard(previous: DashboardSnapshot | null, signal: AbortSignal, token: string, transport?: DashboardTransport): Promise<DashboardView> {
-  try { return acceptDashboard(await readDashboard(signal, token, transport)); }
+  try { return acceptDashboard(await readDashboard(signal, token, transport), previous); }
   catch (error) {
     signal.throwIfAborted();
     return failDashboard(previous, error instanceof DashboardReadError ? error.kind : error instanceof ContractError ? "invalid" : "network");
@@ -96,9 +96,12 @@ export function createDashboardReader(transport: DashboardTransport = fetch) {
         if (!snapshot || !etag || !result.etag || result.etag.replace(/^W\//, "") !== etag.replace(/^W\//, "")) throw new DashboardReadError("invalid");
         return { view: { phase: "ready", snapshot, message: "Dashboard checked; no changes." }, unchanged: true, unauthorized: false };
       }
-      const view = acceptDashboard(result.body);
+      const view = acceptDashboard(result.body, snapshot);
       current();
-      snapshot = view.snapshot; etag = result.etag;
+      snapshot = view.snapshot;
+      const invalid = snapshot!.issues.some((issue) => issue.includes("invalid") || issue.endsWith(": unavailable"))
+        || Object.values(snapshot!.observations).some((entries) => Object.values(entries).some((item) => item.validationIssues?.length));
+      etag = invalid ? null : result.etag;
       return { view, unchanged: false, unauthorized: false };
     } catch (error) {
       current();
