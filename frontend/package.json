@@ -25,7 +25,8 @@
     "verify:requirements": "node scripts/verify-requirements.mjs",
     "verify:sources": "node scripts/verify-requirements.mjs --online",
     "test:ui": "node --test scripts/test-ui.mjs",
-    "test:auth": "node --test scripts/test-auth.mjs"
+    "test:auth": "node --test scripts/test-auth.mjs",
+    "test:boundaries": "node --test scripts/test-boundaries.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

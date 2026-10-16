@@ -9,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { build, preview } from "vite";
 import react from "@vitejs/plugin-react";
+import { privateDataBoundary } from "./private-data-boundary.mjs";
 
 const input = createInterface({ input: process.stdin }), lines = input[Symbol.asyncIterator]();
 const config = JSON.parse((await lines.next()).value);
@@ -16,14 +17,14 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const temporary = await mkdtemp(join(tmpdir(), "economic-dash-browser-"));
 const site = join(temporary, "site"), profile = join(temporary, "profile");
 let browser, socket, web;
-const pending = new Map(), requests = [], statuses = [], errors = [];
+const pending = new Map(), requests = [], network = [], statuses = [], errors = [];
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await probe()) return; await delay(50); }
   throw new Error(`Timed out: ${description}`);
 }
 try {
-  await build({ root, configFile: false, plugins: [react()], logLevel: "error",
+  await build({ root, configFile: false, publicDir: false, plugins: [react(), privateDataBoundary(root)], logLevel: "error",
     define: { "import.meta.env.VITE_API_BASE_URL": JSON.stringify(config.api_url) }, build: { outDir: site, emptyOutDir: true } });
   web = await preview({ root, configFile: false, logLevel: "error", build: { outDir: site },
     preview: { host: "127.0.0.1", port: config.frontend_port, strictPort: true } });
@@ -52,6 +53,8 @@ try {
   socket.addEventListener("message", ({ data }) => {
     const item = JSON.parse(data);
     if (item.method === "Runtime.exceptionThrown") errors.push(item.params.exceptionDetails.text);
+    if (item.method === "Network.requestWillBeSent") network.push(item.params.request.url);
+    if (item.method === "Network.webSocketCreated") network.push(item.params.url);
     if (item.method === "Network.requestWillBeSent" && item.params.type === "Fetch") {
       const request = item.params.request;
       requests.push({ url: request.url, method: request.method, authenticated: !!request.headers.Authorization,
@@ -133,9 +136,16 @@ try {
   assert.equal(await evaluate(`!!document.querySelector('[data-dashboard-root]')`), false);
   assert.equal(errors.length, 0, "Browser runtime exception");
   assert.ok(requests.every((r) => r.url.startsWith(config.api_url + "/api/v1/")), "Browser contacted an unexpected data source");
+  const frontendOrigin = `http://127.0.0.1:${config.frontend_port}`;
+  assert.ok(network.length > 0 && network.every((url) => {
+    const parsed = new URL(url);
+    if (parsed.origin === frontendOrigin) return parsed.pathname === "/" || parsed.pathname.startsWith("/assets/") || parsed.pathname === "/favicon.ico";
+    return parsed.origin === config.api_url && parsed.pathname.startsWith("/api/v1/");
+  }), "Browser network escaped the static frontend/authenticated API boundary");
   await command("Browser.close");
   process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 10, panels: 6, web_storage_disabled: true,
-    cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true }) + "\n");
+    cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
+    network_boundary_verified: true }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

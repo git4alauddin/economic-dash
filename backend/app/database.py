@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 from threading import BoundedSemaphore
 from time import monotonic
 from typing import Iterator
@@ -28,11 +29,32 @@ class Database:
         self.settings = settings
         self._connections = BoundedSemaphore(settings.max_connections)
 
-    def _check_files(self) -> None:
+    def _check_directory(self, *, private: bool = True) -> None:
+        directory = self.settings.directory
+        assert directory is not None
+        # Settings stores a canonical path. Recheck it before each open so a
+        # later directory symlink/junction cannot redirect SQL into public data.
+        if directory.resolve() != directory or directory.is_symlink() or directory.is_junction():
+            raise RuntimeError("Database directory must remain a canonical private directory.")
+        if directory.exists():
+            info = directory.stat()
+            if not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError("Database directory must remain a private directory.")
+            if os.name == "posix" and (info.st_uid != os.geteuid() or (private and info.st_mode & 0o077)):
+                raise RuntimeError("Database directory must be private to the service user.")
+
+    def _check_files(self, *, private: bool = True) -> None:
+        self._check_directory(private=private)
         for suffix in ("", "-wal", "-shm", "-journal"):
             path = Path(str(self.settings.path) + suffix)
-            if path.is_symlink() or (path.exists() and not path.is_file()):
+            if path.is_symlink() or path.is_junction():
                 raise RuntimeError("Database and sidecars must be regular private files.")
+            if path.exists():
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise RuntimeError("Database and sidecars must be regular private files without hard links.")
+                if os.name == "posix" and (info.st_uid != os.geteuid() or (private and info.st_mode & 0o077)):
+                    raise RuntimeError("Database and sidecars must be private to the service user.")
 
     def bootstrap(self) -> None:
         """Repeatable, fail-closed setup; no observation writes or fake seed data."""
@@ -41,8 +63,9 @@ class Database:
                 raise RuntimeError("Production requires a persistent disk mounted at /var/data.")
         directory = self.settings.directory
         assert directory is not None
+        self._check_directory(private=False)
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self._check_files()
+        self._check_files(private=False)
         if os.name == "posix":
             directory.chmod(0o700)
         try:
