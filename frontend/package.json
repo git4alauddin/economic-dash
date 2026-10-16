@@ -12,6 +12,7 @@
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
+    "build:render": "node scripts/check-render-env.mjs && npm run build",
     "preview": "vite preview --host 127.0.0.1",
     "verify:layout": "node scripts/verify-layout.mjs",
     "verify:primitives": "node scripts/verify-layout.mjs --mode primitives",

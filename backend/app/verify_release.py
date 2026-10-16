@@ -21,7 +21,7 @@ from app.api_models import HealthResponse
 
 ROOT = BACKEND_DIRECTORY.parent
 FRONTEND = ROOT / "frontend"
-LOCAL_CHECKS = ("wire_contract", "requirements", "backend_tests", "frontend_tests", "frontend_build")
+LOCAL_CHECKS = ("wire_contract", "requirements", "production_config", "backend_tests", "frontend_tests", "frontend_build")
 
 
 def acceptance(checks, requirements):
@@ -114,7 +114,7 @@ def handoff():
         environment[group] = [prefix + name.upper() for name in model.model_fields if name != "app_env"]
     environment["api"].append("APP_ENV")
     environment["frontend"] = ["VITE_API_BASE_URL"]
-    environment["host_runtime"] = ["PORT", "PYTHON_VERSION"]
+    environment["host_runtime"] = ["PORT", "PYTHON_VERSION", "NODE_VERSION", "SKIP_INSTALL_DEPS"]
     registry = SourceRegistry.load()
     return {"environment_names_only": environment, "endpoints": endpoints,
             "health": {"path": "/health", "responses": {"200": {"status": "ok"}, "503": {"status": "unavailable"}},
@@ -123,10 +123,13 @@ def handoff():
             "source_url_scope": "Reviewed seed routes; observation attribution in SQL/API also includes discovered releases and metadata URLs.",
             "startup": {"local_backend_from_backend": "python run.py", "local_frontend_from_frontend": "npm run dev -- --strictPort",
                         "frontend_build_from_frontend": "npm ci && npm run build",
-                        "hosted_backend_from_backend": 'python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 --no-access-log --no-proxy-headers',
+                        "hosted_backend_from_backend": "python -m app.production",
+                        "production_env_check_from_backend": "python -m app.production --check",
+                        "blueprint_check_from_backend": "python -m app.production --check-blueprint",
                         "database_bootstrap_from_backend": "python -m app.database",
                         "evaluator_provision_from_backend": "python -m app.auth.provision --username evaluator"},
-            "topology": "Planned Vercel frontend / Render API; revalidate feasibility in M7.1. One API worker/instance, persistent /var/data/economic-dash for DB and scheduler locks.",
+            "topology": "Two independent Render services: static React CDN and paid Python API. One API worker/instance; persistent /var/data/economic-dash for DB and scheduler locks. Blueprint: render.yaml.",
+            "rollback": "Manually redeploy a verified Git SHA/deploy, then verify env/CORS/key settings and health. Disk/schema are NOT rolled back; take a SQLite-consistent backup before schema changes and verify restore compatibility. Auto-deploys remain off.",
             "production_docs": "Disabled: /docs, /redoc, /openapi.json. M7 supplies evaluator-facing API reference.",
             "evaluator_walkthrough": ["Provision on hosted persistent DB using hidden prompt; share credentials privately.",
                                       "Sign in; inspect six panels/ticker and source/as-of details; unavailable feeds stay unavailable.",
@@ -148,9 +151,10 @@ def main():
     node = shutil.which("node") or "node"
     checks = [run_check("wire_contract", [sys.executable, "-m", "app.generate_public_contract", "--check"], BACKEND_DIRECTORY),
               run_check("requirements", [node, "scripts/verify-requirements.mjs"], FRONTEND),
+              run_check("production_config", [sys.executable, "-m", "app.production", "--check-blueprint"], BACKEND_DIRECTORY),
               run_check("backend_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"], BACKEND_DIRECTORY),
               run_check("frontend_tests", [node, "--test", "--test-concurrency=1", *[
-                  f"scripts/{name}.mjs" for name in ("test-ui", "test-auth", "test-panel-explorer", "test-integration-inventory", "test-boundaries")]], FRONTEND),
+                  f"scripts/{name}.mjs" for name in ("test-ui", "test-auth", "test-panel-explorer", "test-integration-inventory", "test-boundaries", "test-production")]], FRONTEND),
               run_check("frontend_build", [node, "node_modules/typescript/bin/tsc", "--noEmit"], FRONTEND)]
     # Invoke installed package entry points directly; no shell/npm.cmd quoting or
     # arbitrary command interpolation, and no additional dependency installation.
