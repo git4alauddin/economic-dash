@@ -145,6 +145,36 @@ try {
     assert.ok(!html.includes('class="market-status"'));
     assert.match(html, /Market feed status: NO DATA/);
   });
+  await test("every card reserves a separate comparison area; Seed uses rate deltas and matched-period percent changes", () => {
+    const seed = createSeedDashboard().snapshot;
+    for (const [index, panel] of Object.values(seed.panels).entries()) {
+      const html = render(panels.indicatorPanelComponents[index], { data: panel });
+      assert.equal((html.match(/class="summary-metrics"/g) ?? []).length, 2);
+      assert.equal((html.match(/class="summary-comparison"/g) ?? []).length, 2);
+      assert.equal((html.match(/data-direction=/g) ?? []).length, index === 4 ? 1 : 2);
+    }
+    const gdp = seed.panels.gdp_growth.summaries;
+    assert.deepEqual(gdp.map(item => item.comparison.value), ["0.30", "-0.20"]);
+    assert.ok(gdp.every(item => item.comparison.unit === "percentage_points"));
+    assert.equal(seed.panels.inflation_india.summaries[0].comparison.value, "-0.60");
+    assert.equal(seed.panels.inflation_india.summaries[1].comparison, undefined);
+    for (const id of ["trade", "gst_collection", "government_expenditure"]) {
+      assert.ok(seed.panels[id].summaries.every(item => item.comparison.unit === "percent"));
+    }
+    assert.match(seed.panels.trade.summaries[0].comparison.referenceLabel, /Sep 2025/);
+    assert.match(seed.panels.government_expenditure.summaries[0].comparison.referenceLabel, /Sep 2025 YTD/);
+  });
+  await test("missing Live changes remain unavailable and policy references never receive a direction triangle", () => {
+    const view = adapter.adaptDashboard(dashboardFixture());
+    const gdp = render(panels.GdpPanel, { data: view.panels.gdp_growth });
+    assert.equal((gdp.match(/Change unavailable/g) ?? []).length, 2);
+    assert.ok(!gdp.includes("data-direction="));
+    const target = createSeedDashboard().snapshot.panels.inflation_india;
+    target.summaries[1].comparison = { value: "2", unit: "percentage_points", precision: 2, referenceLabel: "unwanted policy comparison" };
+    const policy = render(panels.InflationPanel, { data: target });
+    assert.match(policy, /Policy reference/); assert.ok(!policy.includes("unwanted policy comparison"));
+    assert.equal((policy.match(/data-direction=/g) ?? []).length, 1);
+  });
   await test("chart conversion rejects non-finite/underflow values without hiding zero", () => {
     assert.equal(format.toChartNumber("0"), 0);
     assert.equal(format.toChartNumber("9".repeat(400)), null);

@@ -85,9 +85,16 @@ export async function auditDashboard(command, evaluate, loadingFrames) {
     const detail = await evaluate(`(() => {
       const root=document.querySelector('[data-dashboard-root]').getBoundingClientRect();
       const rect=node=>{const b=node.getBoundingClientRect();return {x:b.x,y:b.y-root.y,width:b.width,height:b.height}};
-      const clipped=Array.from(document.querySelectorAll('.summary-number,.summary-label,.panel-heading h2,.source-as-of')).filter(node=>node.getBoundingClientRect().width>0&&node.scrollWidth>node.clientWidth+1).map(node=>node.className);
+      const clipped=Array.from(document.querySelectorAll('.summary-number,.summary-label,.summary-comparison,.panel-heading h2,.source-as-of')).filter(node=>node.getBoundingClientRect().width>0&&node.scrollWidth>node.clientWidth+1).map(node=>node.className);
+      const summaryComparisons=Array.from(document.querySelectorAll('.summary-metrics')).map(node=>{
+        const value=node.querySelector('.summary-number').getBoundingClientRect(),change=node.querySelector('.summary-comparison').getBoundingClientRect(),box=node.getBoundingClientRect();
+        const summary=node.closest('.summary-value'),artwork=summary.querySelector('.summary-artwork')?.getBoundingClientRect(),label=summary.querySelector('.summary-label').getBoundingClientRect();
+        return {overlap:Math.min(value.right,change.right)-Math.max(value.left,change.left)>1&&Math.min(value.bottom,change.bottom)-Math.max(value.top,change.top)>1,
+          aligned:Math.abs(change.left-box.left)<=1&&change.top>=value.bottom-1,
+          artworkRight:!!artwork&&artwork.left>=Math.max(label.right,value.right,change.right)-1&&artwork.right<=summary.getBoundingClientRect().right,
+          artworkCentered:!!artwork&&Math.abs((artwork.top+artwork.bottom)/2-(summary.getBoundingClientRect().top+summary.getBoundingClientRect().bottom)/2)<=1&&artwork.height>=36};});
       return {rootY:root.y, scale:visualViewport.scale, dpr:devicePixelRatio, header:rect(document.querySelector('.dashboard-header')),ticker:rect(document.querySelector('.market-ticker')),
-        panels:Array.from(document.querySelectorAll('[data-panel-id]')).map(node=>({id:node.dataset.panelId,...rect(node)})),clipped,
+        panels:Array.from(document.querySelectorAll('[data-panel-id]')).map(node=>({id:node.dataset.panelId,...rect(node)})),clipped,summaryComparisons,
         headingFont:getComputedStyle(document.querySelector('.panel-heading h2')).fontSize,
         text:getComputedStyle(document.documentElement).color, muted:getComputedStyle(document.documentElement).getPropertyValue('--color-muted').trim(),
         page:getComputedStyle(document.documentElement).backgroundColor,
@@ -100,6 +107,7 @@ export async function auditDashboard(command, evaluate, loadingFrames) {
     if (basic.viewportWidth !== viewport.width || basic.viewportHeight !== viewport.height || detail.scale !== 1 || detail.dpr !== 1) issues.push("CSS viewport/zoom/scale");
     if (basic.documentWidth > basic.layoutWidth) issues.push("Document overflow");
     if (basic.clippedHeadings || detail.clipped.length) issues.push(`Clipped text: ${detail.clipped.join(",")}`);
+    if (detail.summaryComparisons.length !== 12 || detail.summaryComparisons.some(item=>item.overlap||!item.aligned||!item.artworkRight||!item.artworkCentered)) issues.push("Summary comparison/artwork alignment or overlap");
     if (basic.duplicateIds || basic.danglingAria.length || basic.mainCount !== 1 || basic.h1Count !== 1 || basic.language !== "en" || unnamed) issues.push("Accessible structure/names");
     if (basic.chartCount !== basic.dataTableCount || basic.chartCount !== basic.chartTabStops || basic.minChartTextPx < 9.99) issues.push("Chart alternatives, focus or text size");
     if (new Set(detail.panels.map((panel) => Math.round(panel.x))).size !== (viewport.width <= 800 ? 1 : 2)) issues.push("Responsive columns");

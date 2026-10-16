@@ -18,7 +18,7 @@ export default function ComparisonChange({ value, unit, precision, referenceLabe
       <span aria-hidden="true">{sign === null ? "" : sign > 0 ? "▲" : sign < 0 ? "▼" : "•"}</span>
       <span className="sr-only">{label}: </span>
       <span>{display === MISSING ? MISSING : `${sign === 1 ? "+" : ""}${display}`}</span>
-      <span className="comparison-reference">{referenceLabel}</span>
+      <span className="comparison-reference">{/^vs\b/i.test(referenceLabel) ? referenceLabel : `vs ${referenceLabel}`}</span>
     </span>
   );
 }

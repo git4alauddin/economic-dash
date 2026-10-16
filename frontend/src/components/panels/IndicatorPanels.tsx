@@ -34,10 +34,15 @@ function PanelContent({ recipe, data, state = "unavailable", explorer }: PanelPr
       <div className="panel-summaries">
         {summaries.map((summary, index) => {
           const state = summary.state ?? status, available = state === "fresh" || state === "stale";
-          return <SummaryValue key={index} {...summary} value={available ? summary.value : null} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement={recipe.index < 2 ? "inline" : "corner"}>
-            {available && summary.comparison && <ComparisonChange {...summary.comparison} />}
-            {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "loading" ? "Loading…" : state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
-            {summary.detail && <span className="summary-explanation">{summary.detail}</span>}
+          const policy = recipe.kind === "inflation" && index === 1;
+          const comparison = policy ? <span className="summary-policy">Policy reference</span>
+            : available && summary.value !== null && summary.comparison?.value != null ? <ComparisonChange {...summary.comparison} />
+            : <span className="summary-change-missing">{state === "loading" ? "—" : "Change unavailable"}</span>;
+          return <SummaryValue key={index} {...summary} comparison={comparison} value={available ? summary.value : null} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement="corner">
+            {((summary.state && state !== "fresh") || summary.detail) && <>
+              {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "loading" ? "Loading…" : state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
+              {summary.detail && <span className="summary-explanation">{summary.detail}</span>}
+            </>}
           </SummaryValue>;
         })}
       </div>

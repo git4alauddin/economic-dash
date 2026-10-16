@@ -379,7 +379,14 @@ try {
     await command("Emulation.setDeviceMetricsOverride", { ...viewport, deviceScaleFactor: 1, mobile: false });
     await evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
     const seed = await evaluate(`(() => {
-      const clipped = Array.from(document.querySelectorAll('.summary-number,.summary-label,.panel-heading h2')).filter(node=>node.scrollWidth>node.clientWidth+1).length;
+      const clipped = Array.from(document.querySelectorAll('.summary-number,.summary-label,.summary-comparison,.panel-heading h2')).filter(node=>node.scrollWidth>node.clientWidth+1).length;
+      const comparisons=Array.from(document.querySelectorAll('.summary-metrics')).map(node=>{
+        const value=node.querySelector('.summary-number').getBoundingClientRect(),change=node.querySelector('.summary-comparison').getBoundingClientRect(),box=node.getBoundingClientRect();
+        const summary=node.closest('.summary-value'),artwork=summary.querySelector('.summary-artwork')?.getBoundingClientRect(),label=summary.querySelector('.summary-label').getBoundingClientRect();
+        return {overlap:Math.min(value.right,change.right)-Math.max(value.left,change.left)>1&&Math.min(value.bottom,change.bottom)-Math.max(value.top,change.top)>1,
+          aligned:Math.abs(change.left-box.left)<=1&&change.top>=value.bottom-1,
+          artworkRight:!!artwork&&artwork.left>=Math.max(label.right,value.right,change.right)-1&&artwork.right<=summary.getBoundingClientRect().right,
+          artworkCentered:!!artwork&&Math.abs((artwork.top+artwork.bottom)/2-(summary.getBoundingClientRect().top+summary.getBoundingClientRect().bottom)/2)<=1&&artwork.height>=36};});
       return {banner:document.querySelector('.seed-notice')?.textContent.includes('Not live observations'),
         charts:document.querySelectorAll('.chart-frame svg').length,
         values:Array.from(document.querySelectorAll('.summary-number')).filter(node=>node.textContent.trim()!=='—').length,
@@ -387,10 +394,14 @@ try {
         refreshDisabled:document.querySelector('.session-toolbar button').disabled,
         liveControls:document.querySelectorAll('.panel-history-controls').length,
         overflow:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)>innerWidth,
-        focused:document.activeElement.getAttribute('aria-label')==='Seed data',clipped};})()`);
+        focused:document.activeElement.getAttribute('aria-label')==='Seed data',clipped,comparisons,
+        changes:document.querySelectorAll('.summary-comparison .comparison-change').length,
+        policies:document.querySelectorAll('.summary-policy').length};})()`);
     assert.equal(seed.banner, true); assert.equal(seed.charts, 6); assert.equal(seed.values, 12); assert.equal(seed.quotes, 3);
     assert.equal(seed.refreshDisabled, true); assert.equal(seed.liveControls, 0); assert.equal(seed.overflow, false);
     assert.equal(seed.focused, true, "Switch focus was lost during mode changes"); assert.equal(seed.clipped, 0, "Seed labels/values clipped");
+    assert.equal(seed.changes, 11); assert.equal(seed.policies, 1);
+    assert.equal(seed.comparisons.length, 12); assert.ok(seed.comparisons.every(item=>!item.overlap&&item.aligned&&item.artworkRight&&item.artworkCentered), "Seed comparison/artwork overlap or alignment");
     seedModeViews.push({ ...viewport, ...seed });
   }
   await delay(150);
