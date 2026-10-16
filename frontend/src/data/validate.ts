@@ -87,5 +87,6 @@ export function series(value: unknown, expectedUnit: Unit): ApiSeries {
     if (formatDate(from, "day") === MISSING || to !== null && (formatDate(to, "day") === MISSING || to < from)) throw new ContractError();
     policy = { applicable: flag(input.applicable), valid_from: from, valid_to: to };
   }
-  return { name: text(raw.name), precision: precision(raw.precision), latest, comparison, history, policy, validationIssues };
+  const comparisonReason = raw.comparison_reason_code === undefined || raw.comparison_reason_code === null ? null : text(raw.comparison_reason_code);
+  return { name: text(raw.name), precision: precision(raw.precision), latest, comparison, comparisonReason, history, policy, validationIssues };
 }

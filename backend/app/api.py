@@ -98,8 +98,7 @@ def indicator(indicator_id: IndicatorPath, service: Service, options: Annotated[
         now = datetime.now(timezone.utc)
         value = service.indicator(indicator_id, window=options.window, end_periods=selections, now=now)
         result = project.panel(service, value, now)
-        return Envelope[ResponsePanel](data=result, meta=project.meta(value.checkpoint_run_id, now,
-            any(entry.latest.value is None or entry.history.status != "fresh" or any(p.value is None for p in entry.history.points) for entry in result.series.values())))
+        return Envelope[ResponsePanel](data=result, meta=project.meta(value.checkpoint_run_id, now, project.panel_partial(result)))
     return conditional_response(request, response, read(operation))
 
 
@@ -123,7 +122,8 @@ def ticker(service: Service, request: Request, response: Response):
             raise ValueError("Ticker accepts no query parameters")
         now = datetime.now(timezone.utc)
         version = service.ticker_version()
-        return Envelope[ResponseTicker](data=project.ticker(service), meta=project.meta(version, now))
+        result = project.ticker(service)
+        return Envelope[ResponseTicker](data=result, meta=project.meta(version, now, project.ticker_partial(result)))
     return conditional_response(request, response, read(operation))
 
 

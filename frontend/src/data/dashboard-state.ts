@@ -73,7 +73,8 @@ export function failDashboard(previous: DashboardSnapshot | null, kind: "network
     return { ...item, state: allowed ? "stale" as const : "unavailable" as const, value: allowed ? item.value : null,
       changePoints: allowed ? item.changePoints : null, changePercent: allowed ? item.changePercent : null, detail: allowed ? "Refresh failed; permitted observation retained as stale." : "Refresh failed; retention not permitted." };
   });
-  return { phase: "ready", snapshot: { ...previous, observations, panels, partial: true,
+  return { phase: "ready", snapshot: { ...previous, observations, panels,
+    partial: previous.partial || Object.values(panels).some((panel) => panel.partial) || items.some((item) => item.value === null),
     ticker: { ...previous.ticker, state: items.some((item) => item.value !== null) ? "stale" : "error", refreshing: false, items },
     issues: [...previous.issues.filter((issue) => !issue.startsWith("refresh: ")), `refresh: ${kind}`] }, message: "Refresh failed. Retained values are marked stale; other values are unavailable." };
 }

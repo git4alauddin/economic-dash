@@ -49,6 +49,7 @@ class SeriesRead:
     source_states: tuple[SourceState, ...] = ()
     checkpoint_run_id: str | None = None
     history_truncated: bool = False
+    historical_selection: bool = False
 
 
 @dataclass(frozen=True)
@@ -247,7 +248,13 @@ class DashboardQueries:
         history = HistoricalSeries(**fields)
         older_cutoff = (slots[0].period.start - timedelta(days=1)).isoformat()
         truncated = any(self._latest_end(connection, dependency, older_cutoff) for dependency in dependencies)
-        return SeriesRead(history, anchor, latest_valid, compare(latest_valid, history.observations), history_truncated=truncated)
+        historical_selection = False
+        if selection is not None and valid_end is not None:
+            current_end = (self._latest_balance_end(connection, now.date().isoformat()) if sid == "trade_balance" else
+                           self._latest_end(connection, sid, now.date().isoformat(), valid=True))
+            historical_selection = current_end is not None and valid_end < current_end
+        return SeriesRead(history, anchor, latest_valid, compare(latest_valid, history.observations),
+                          history_truncated=truncated, historical_selection=historical_selection)
 
     def _selections(self, indicator: str, selections: Mapping[str, str] | None) -> dict[str, str]:
         if indicator not in self.panels:

@@ -55,12 +55,12 @@ def comparison(value):
         transform_id=value.transform_id, exact_numerator=str(value.value.numerator), exact_denominator=str(value.value.denominator))
 
 
-def observation(queries, sid, point, states, now, *, selected=None, reason=None):
+def observation(queries, sid, point, states, now, *, selected=None, reason=None, historical=False):
     definition = queries.catalog["requirements"][sid]
     context = freshness_context(queries, states)
     state = next((s for s in context.states if s.source_id == definition["source_id"]), SourceState(source_id=definition["source_id"]))
     blocked = definition.get("reason_code") if definition["status"] == "blocked" else None
-    validity = freshness(sid, point, state, now, blocked_reason=blocked, empty=state.outcome == "empty")
+    validity = freshness(sid, point, state, now, blocked_reason=blocked, empty=state.outcome == "empty", historical=historical)
     status, code = validity.status, validity.reason_code
     if point is None or point.value is None:
         if blocked:
@@ -94,8 +94,11 @@ def series(queries: DashboardQueries, value: SeriesRead, states, now: datetime) 
     sid = value.history.series_id
     retained = value.latest_valid is not None and (value.history.latest is None or value.history.latest.value is None)
     latest = observation(queries, sid, value.latest_valid, states, now, selected=value.selected_period,
-                         reason="latest_period_observation_missing" if retained else value.history.reason_code if value.latest_valid is None else None)
-    points = tuple(observation(queries, sid, slot.observation, states, now, selected=slot.period, reason=slot.reason_code)
+                         reason="latest_period_observation_missing" if retained else value.history.reason_code if value.latest_valid is None else None,
+                         historical=value.historical_selection)
+    points = tuple(observation(queries, sid, slot.observation, states, now, selected=slot.period, reason=slot.reason_code,
+                              historical=value.historical_selection or (value.latest_valid is not None
+                                  and slot.period.end < value.latest_valid.observation_period.end))
                    for slot in value.history.window)
     displayable = [point for point in points if point.value is not None]
     status = "stale" if any(p.status == "stale" for p in displayable) else "fresh" if displayable else latest.status
@@ -129,9 +132,11 @@ def chart(value: IndicatorRead, entries: dict[str, ResponseSeries]):
 def panel(queries: DashboardQueries, value: IndicatorRead, now: datetime, *, context=None) -> ResponsePanel:
     context = freshness_context(queries, value.source_states) if context is None else context
     entries = {s.history.series_id: series(queries, s, context, now) for s in value.series}
+    historical = {s.history.series_id: s.historical_selection for s in value.series}
     summaries = []
     for card in value.summaries:
-        point = observation(queries, card.requirement_id, card.observation, context, now, reason=card.reason_code) if card.definition_id is not None and card.unit is not None else None
+        point = observation(queries, card.requirement_id, card.observation, context, now, reason=card.reason_code,
+                            historical=historical.get(card.requirement_id, False)) if card.definition_id is not None and card.unit is not None else None
         summaries.append(ResponseSummary(slot=card.slot, requirement_id=card.requirement_id, definition_id=card.definition_id,
             unit=card.unit, observation=point, comparison=comparison(card.comparison), comparison_reason_code=card.comparison.reason_code, reason_code=card.reason_code))
     latest = [entry.latest for entry in entries.values() if entry.latest.value is not None]
@@ -149,22 +154,42 @@ def ticker(queries):
         for item in queries.inventory["ticker"]["instruments"]))
 
 
-def meta(version, now, partial=True):
+def series_partial(value: ResponseSeries) -> bool:
+    """Coverage is independent of freshness; a complete stale window is complete."""
+    return (value.latest.value is None or value.latest.status not in {"fresh", "stale"}
+            or value.history.status not in {"fresh", "stale"} or not value.history.points
+            or any(p.value is None or p.status not in {"fresh", "stale"} for p in value.history.points)
+            or (value.comparison is None and value.comparison_reason_code not in
+                {None, "comparison_not_defined", "zero_reference_denominator"}))
+
+
+def panel_partial(value: ResponsePanel) -> bool:
+    return (not value.series or any(series_partial(entry) for entry in value.series.values())
+            or any(card.observation is None or card.observation.value is None for card in value.summaries))
+
+
+def ticker_partial(value: ResponseTicker) -> bool:
+    return not value.items or any(item.value is None or item.status not in {"fresh", "stale"} for item in value.items)
+
+
+def meta(version, now, partial):
     return ResponseMeta(generated_at=now, version=version or "empty", data_version=version or "empty", partial=partial)
 
 
 def dashboard(queries, value: DashboardRead, now):
     context = freshness_context(queries, value.source_states)
     panels = {p.indicator_id: panel(queries, p, now, context=context) for p in value.panels}
-    return Envelope[DashboardData](data=DashboardData(panels=panels, ticker=ticker(queries)),
-                                   meta=meta(value.checkpoint_run_id, now))
+    quotes = ticker(queries)
+    return Envelope[DashboardData](data=DashboardData(panels=panels, ticker=quotes),
+                                   meta=meta(value.checkpoint_run_id, now,
+                                             any(panel_partial(p) for p in panels.values()) or ticker_partial(quotes)))
 
 
 def history(queries, value: SeriesRead, now):
     wire = series(queries, value, value.source_states, now)
     return Envelope[HistoryData](data=HistoryData(indicator_id=value.history.indicator_id, series_id=value.history.series_id,
         selected_period=period(value.selected_period), series=wire, superseded=value.history.superseded),
-        meta=meta(value.checkpoint_run_id, now, value.history.status != "available" or wire.latest.status != "fresh"))
+        meta=meta(value.checkpoint_run_id, now, series_partial(wire)))
 
 
 def catalog(queries, value: DashboardRead, now):
@@ -181,4 +206,5 @@ def catalog(queries, value: DashboardRead, now):
                 limitations=(source["limits"], queries.catalog["reuse"][source["reuse_id"]]["constraint"]),
                 available_periods=tuple(period(slot.period) for slot in s.history.window if slot.observation is not None and slot.observation.value is not None)))
         indicators.append(CatalogIndicator(indicator_id=p.indicator_id, series=tuple(entries), summary_requirements=tuple(c.requirement_id for c in p.summaries)))
-    return Envelope[tuple[CatalogIndicator, ...]](data=tuple(indicators), meta=meta(value.checkpoint_run_id, now))
+    return Envelope[tuple[CatalogIndicator, ...]](data=tuple(indicators), meta=meta(value.checkpoint_run_id, now,
+        any(s.status == "blocked" or not s.available_periods for p in indicators for s in p.series)))

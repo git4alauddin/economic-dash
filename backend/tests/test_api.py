@@ -123,6 +123,66 @@ class ApiTests(unittest.TestCase):
         historical = self.get("/api/v1/indicators/gdp_growth/history?series_id=gdp_growth_world&end_period_id=CY2024")
         self.assertEqual(historical["data"]["selected_period"]["id"], "CY2024")
 
+    def test_old_history_does_not_expire_current_gdp_and_explicit_selection_stays_historical(self):
+        self.populate()
+        before = self.repository.load()
+        body = self.get("/api/v1/indicators/gdp_growth?window=2")
+        self.assertFalse(body["meta"]["partial"])
+        for entry in body["data"]["series"].values():
+            self.assertEqual(entry["latest"]["status"], "fresh")
+            self.assertEqual(entry["history"]["status"], "fresh")
+            older, latest = entry["history"]["points"]
+            self.assertEqual(older["status"], "fresh")
+            self.assertIsNone(older["publication_deadline"])
+            self.assertIsNotNone(latest["publication_deadline"])
+        selected = self.get("/api/v1/indicators/gdp_growth?window=1&period=gdp_growth_world:CY2024")
+        self.assertEqual(selected["data"]["series"]["gdp_growth_world"]["latest"]["status"], "fresh")
+        self.assertEqual(selected["data"]["summaries"][1]["observation"]["status"], "fresh")
+        historical = self.get("/api/v1/indicators/gdp_growth/history?series_id=gdp_growth_world&window=1&end_period_id=CY2024")
+        self.assertEqual(historical["data"]["series"]["latest"]["status"], "fresh")
+        self.assertEqual(historical["data"]["series"]["latest"]["as_of"], "2024")
+        self.assertIsNone(historical["data"]["series"]["latest"]["publication_deadline"])
+        self.assertEqual(self.repository.load(), before)
+
+    def test_partial_tracks_requested_coverage_and_missing_comparisons_independently_of_staleness(self):
+        self.populate()
+        base = "/api/v1/indicators/gdp_growth/history?series_id=gdp_growth_world"
+        self.assertFalse(self.get(base + "&window=2")["meta"]["partial"])
+        self.assertTrue(self.get(base + "&window=3")["meta"]["partial"])
+        self.assertTrue(self.get(base + "&window=1&end_period_id=CY2024")["meta"]["partial"])
+        self.assertTrue(self.get("/api/v1/indicators/government_expenditure?window=1")["meta"]["partial"])
+        self.assertTrue(self.get("/api/v1/dashboard?window=1")["meta"]["partial"])
+        self.assertTrue(self.get("/api/v1/ticker")["meta"]["partial"])
+        cache = RepositoryBridge(self.repository).open_cache()
+        later = NOW + timedelta(hours=1)
+        self.assertTrue(cache.record_failure(("world_bank_gdp",), run_id="history-failure", started=later, finished=later, reason="timeout"))
+        failed = self.get(base + "&window=2")
+        self.assertFalse(failed["meta"]["partial"])
+        for point in failed["data"]["series"]["history"]["points"]:
+            self.assertEqual((point["status"], point["reason_code"]), ("stale", "timeout"))
+
+    def test_current_release_and_source_check_deadlines_still_expire_values_without_erasing_history(self):
+        self.populate()
+        path = "/api/v1/indicators/gdp_growth?window=2"
+        with patch("app.collectors.freshness.publication_deadline", return_value=NOW):
+            body = self.get(path)["data"]
+        for entry in body["series"].values():
+            self.assertEqual(entry["latest"]["reason_code"], "observation_release_overdue")
+            self.assertEqual(entry["history"]["points"][0]["status"], "fresh")
+            self.assertEqual(entry["history"]["points"][-1]["status"], "stale")
+        self.clock.now.return_value = NOW + timedelta(days=30)
+        overdue = self.get(path)["data"]
+        for entry in overdue["series"].values():
+            self.assertTrue(all(p["status"] == "stale" and p["reason_code"] == "refresh_check_overdue" for p in entry["history"]["points"]))
+
+    def test_missing_latest_period_is_retained_stale_instead_of_becoming_fresh_history(self):
+        self.repository.commit(prepare(checks=(world_resource(values=("1.00", None)),)))
+        for query in ("", "&end_period_id=CY2025"):
+            body = self.get("/api/v1/indicators/gdp_growth/history?series_id=gdp_growth_world&window=2" + query)
+            self.assertEqual(body["data"]["series"]["latest"]["reason_code"], "latest_period_observation_missing")
+            self.assertEqual(body["data"]["series"]["latest"]["status"], "stale")
+            self.assertTrue(body["meta"]["partial"])
+
     def test_catalog_and_ticker_preserve_blockers_without_fetching_quotes(self):
         self.populate()
         catalog = self.get("/api/v1/indicators?window=24")

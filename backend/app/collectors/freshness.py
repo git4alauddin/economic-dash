@@ -59,10 +59,12 @@ def publication_deadline(point: NormalizedObservation) -> datetime:
     return deadline.astimezone(timezone.utc)
 
 
-def freshness(series_id: str, point: NormalizedObservation | None, state: SourceState, now: datetime, *, blocked_reason: str | None = None, empty: bool = False) -> SeriesFreshness:
+def freshness(series_id: str, point: NormalizedObservation | None, state: SourceState, now: datetime, *, blocked_reason: str | None = None, empty: bool = False, historical: bool = False) -> SeriesFreshness:
     if now.utcoffset() != timedelta(0):
         raise ValueError("Freshness evaluation requires aware UTC time.")
-    deadline = publication_deadline(point) if point is not None else None
+    # Historical periods are expected to be old. Collection failures/check ages
+    # still apply, but a newer period's release cannot expire an archived value.
+    deadline = publication_deadline(point) if point is not None and not historical else None
     check_deadline = None
     if state.last_success_at is not None:
         policy = POLICIES[state.source_id]

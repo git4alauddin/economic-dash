@@ -24,6 +24,7 @@ export interface PanelChart {
 }
 export interface PanelPresentation {
   state: UiState;
+  partial?: boolean;
   summaries: readonly SummaryDatum[];
   period: { label: string | null; basis?: "calendar" | "fiscal" };
   chart: PanelChart | null;

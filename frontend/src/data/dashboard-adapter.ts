@@ -7,6 +7,12 @@ import { panelBindings, type ApiSeries, type DashboardSnapshot, type Observation
 import * as v from "./validate";
 
 const displayable = (state: UiState) => state === "fresh" || state === "stale";
+export function seriesIsPartial(item: ApiSeries): boolean {
+  return item.latest.value === null || !displayable(item.latest.status) || !displayable(item.history.status)
+    || !item.history.points.length || item.history.points.some((point) => point.value === null || !displayable(point.status))
+    || !!item.validationIssues?.length || item.comparison === null && !!item.comparisonReason
+      && !["comparison_not_defined", "zero_reference_denominator"].includes(item.comparisonReason);
+}
 function aggregate(states: readonly UiState[]): UiState {
   if (states.includes("stale")) return "stale";
   if (states.includes("fresh")) return "fresh";
@@ -24,6 +30,8 @@ function sharedDate(observations: readonly Observation[]): AsOfDate | null {
 export function stateDetail(state: UiState, reason: string | null): string {
   if (reason === "comparison_definition_unresolved") return "India–US comparison definition and aligned periods are unresolved.";
   if (reason === "refresh_failed") return "Refresh failed; permitted observations retained and marked stale.";
+  if (reason === "refresh_check_overdue") return "Source check overdue; retained values keep their original dates.";
+  if (reason === "observation_release_overdue") return "A newer reporting period is expected; the last available value is retained.";
   if (reason === "invalid_response") return "Response validation failed; no unvalidated values are shown.";
   if (state === "stale") return "Retained observation; check its original date and source.";
   if (state === "error") return "Unable to load this data.";
@@ -75,15 +83,16 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
       unit: definition?.unit ?? binding.series[0].unit, precision: item?.precision ?? 2, state: item?.latest.status ?? "unavailable" as UiState,
       comparison: item?.comparison && item.latest.value !== null ? { value: item.comparison.value, unit: item.comparison.unit, precision: item.comparison.precision, referenceLabel: item.comparison.reference_label } : undefined };
   });
-  const partial = binding.series.some((entry) => !entries[entry.id] || entries[entry.id].latest.value === null || !displayable(entries[entry.id].history.status));
+  const partial = binding.summaries.some((id) => !id || !entries[id] || entries[id].latest.value === null)
+    || binding.series.some((entry) => !entries[entry.id] || seriesIsPartial(entries[entry.id])) || !chart;
   const allPoints = [...latest, ...items.flatMap((item) => item.history.points)];
-  return { state, chartState, summaries, chart, period: { label: typeof input.period_label === "string" ? input.period_label.slice(0, 240) : null },
+  return { state, partial, chartState, summaries, chart, period: { label: typeof input.period_label === "string" ? input.period_label.slice(0, 240) : null },
     sources: mergeSources(allPoints), asOf: sharedDate(latest),
-    detail: (partial && displayable(state) ? "Partial data · inspect series details" : stateDetail(state, latest.find((point) => point.reason_code)?.reason_code ?? null)) + (panelId === "debt_to_gdp" ? ` ${stateDetail("unavailable", "comparison_definition_unresolved")}` : ""),
+    detail: (partial && displayable(state) ? `${state === "stale" ? "Stale data · " : ""}Partial data · inspect series details` : stateDetail(state, latest.find((point) => point.reason_code)?.reason_code ?? null)) + (panelId === "debt_to_gdp" ? ` ${stateDetail("unavailable", "comparison_definition_unresolved")}` : ""),
     seriesDetails: binding.series.map((definition) => {
       const item = entries[definition.id];
       return { id: definition.id, label: item?.name ?? definition.label, state: item?.latest.status ?? "unavailable",
-        detail: item ? `${stateDetail(item.latest.status, item.latest.reason_code)} History: ${item.history.status}${item.history.truncated ? " · truncated" : ""}.${item.policy ? ` Policy validity: ${item.policy.valid_from} to ${item.policy.valid_to ?? "unspecified end"}.` : ""} ${(item.validationIssues ?? []).join(" ")}` : "No validated observation available.",
+        detail: item ? `${stateDetail(item.latest.status, item.latest.reason_code)} History: ${item.history.status} · ${item.history.points.filter((point) => point.value !== null).length}/${item.history.points.length} periods${item.history.truncated ? " · earlier periods outside this window" : ""}.${item.comparison === null && item.comparisonReason && item.comparisonReason !== "comparison_not_defined" ? " Comparison unavailable." : ""}${item.policy ? ` Policy validity: ${item.policy.valid_from} to ${item.policy.valid_to ?? "unspecified end"}.` : ""} ${(item.validationIssues ?? []).join(" ")}` : "No validated observation available.",
         sources: item ? mergeSources([item.latest, ...item.history.points]) : [], asOf: item?.latest.as_of ?? null,
         precision: item?.precision, history: item?.history.points.map((point) => ({ period: point.observation_period?.label ?? "Period unavailable", value: point.value, unit: point.unit })) };
     }) };
@@ -127,7 +136,7 @@ export function adaptDashboard(payload: unknown): DashboardSnapshot {
         const item = v.series(entries[binding.id], binding.unit);
         if (binding.id === "rbi_target" && item.latest.value !== null && !item.policy?.applicable) throw new v.ContractError();
         parsed[binding.id] = item;
-        if (item.history.status === "error" || item.latest.value === null || !displayable(item.latest.status) || item.validationIssues?.length) issues.push(`${panel.id}/${binding.id}: partial`);
+        if (seriesIsPartial(item)) issues.push(`${panel.id}/${binding.id}: partial`);
       } catch { issues.push(`${panel.id}/${binding.id}: invalid series`); }
     }
     observations[panel.id] = parsed;
@@ -136,5 +145,6 @@ export function adaptDashboard(payload: unknown): DashboardSnapshot {
   }
   const ticker = parseTicker(data.ticker, issues);
   return { panels, ticker: ticker.model, quoteRetention: ticker.retention, observations, version, generatedAt: meta.generated_at as string,
-    partial: v.flag(meta.partial) || issues.length > 0, issues };
+    partial: v.flag(meta.partial) || issues.length > 0 || Object.values(panels).some((panel) => panel.partial) || ticker.model.items.length !== 3
+      || ticker.model.items.some((item) => item.value === null || !displayable(item.state)), issues };
 }

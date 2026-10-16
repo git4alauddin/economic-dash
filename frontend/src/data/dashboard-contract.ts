@@ -21,6 +21,7 @@ export interface ApiSeries {
   precision: number;
   latest: Observation;
   comparison: { value: DecimalValue; unit: Unit; precision: number; reference_label: string; kind: string; reference_series_id: string; reference_period_id: string } | null;
+  comparisonReason?: string | null;
   history: { status: DataStatus; points: readonly Observation[]; truncated: boolean };
   policy?: { applicable: boolean; valid_from: string; valid_to: string | null };
   validationIssues?: readonly string[];

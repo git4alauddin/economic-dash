@@ -274,6 +274,46 @@ try {
     assert.ok(render(panels.GdpPanel, { data: panel }).includes("Series details"));
     assert.ok(!render(panels.GdpPanel, { data: panel }).includes("2025-01-01"));
   });
+  await test("history gaps mark a fresh panel partial and preserve missing chart values and original dates", () => {
+    const raw = dashboardFixture(), series = raw.data.panels.gdp_growth.series.gdp_growth_world;
+    const original = structuredClone(series.latest);
+    series.history.points[0] = { ...series.history.points[0], value: null, status: "unavailable", reason_code: "historical_observation_unavailable", retention_allowed: false };
+    const result = adapter.adaptDashboard(raw), panel = result.panels.gdp_growth;
+    assert.equal(panel.state, "fresh"); assert.equal(panel.partial, true); assert.equal(result.partial, true);
+    assert.deepEqual(result.observations.gdp_growth.gdp_growth_world.latest.as_of.value, original.as_of);
+    assert.equal(panel.summaries[1].value, original.value);
+    assert.equal(panel.chart.series[1].values[0], null);
+    assert.match(panel.detail, /Partial data/);
+    assert.match(panel.seriesDetails[1].detail, /4\/5 periods/);
+  });
+  await test("complete stale coverage is independent of partial coverage; failed checks remain visible", () => {
+    const raw = dashboardFixture();
+    for (const series of Object.values(raw.data.panels.gdp_growth.series)) {
+      series.latest.status = "stale"; series.latest.reason_code = "refresh_check_overdue";
+      series.history.status = "stale";
+      for (const point of series.history.points) { point.status = "stale"; point.reason_code = "refresh_check_overdue"; }
+    }
+    let panel = adapter.adaptDashboard(raw).panels.gdp_growth;
+    assert.equal(panel.state, "stale"); assert.equal(panel.partial, false);
+    assert.match(panel.seriesDetails[0].detail, /Source check overdue/);
+    const point = raw.data.panels.gdp_growth.series.gdp_growth_world.history.points[0];
+    point.value = null; point.status = "unavailable";
+    panel = adapter.adaptDashboard(raw).panels.gdp_growth;
+    assert.equal(panel.partial, true); assert.match(panel.detail, /Stale data.*Partial data/);
+  });
+  await test("missing comparison inputs mark coverage partial while undefined calculations and bounded archives do not", () => {
+    const raw = dashboardFixture(), series = raw.data.panels.gdp_growth.series.gdp_growth_world;
+    series.history.truncated = true;
+    assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.partial, false);
+    series.comparison_reason_code = "reference_observation_missing";
+    let panel = adapter.adaptDashboard(raw).panels.gdp_growth;
+    assert.equal(panel.partial, true); assert.match(panel.seriesDetails[1].detail, /Comparison unavailable/);
+    for (const reason of ["comparison_not_defined", "zero_reference_denominator"]) {
+      series.comparison_reason_code = reason;
+      panel = adapter.adaptDashboard(raw).panels.gdp_growth;
+      assert.equal(panel.partial, false); assert.equal(panel.summaries[1].state, "fresh");
+    }
+  });
   await test("only verified comparisons with explicit reference identity use supplied precision", () => {
     const raw = dashboardFixture(), series = raw.data.panels.gdp_growth.series.gdp_growth_india;
     series.precision = 3;
