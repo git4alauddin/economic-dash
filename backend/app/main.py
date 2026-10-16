@@ -57,11 +57,10 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         finally:
             await scheduler.stop()
 
-    production = settings.app_env == "production"
     application = FastAPI(title="Economic Indicators API", version="0.1.0", lifespan=lifespan,
-                          docs_url=None if production else "/docs",
-                          redoc_url=None if production else "/redoc",
-                          openapi_url=None if production else "/openapi.json")
+                          docs_url="/docs", redoc_url=None, openapi_url="/openapi.json",
+                          swagger_ui_oauth2_redirect_url=None,
+                          swagger_ui_parameters={"persistAuthorization": False})
     install_api(application)
     application.include_router(auth_router)
     application.add_middleware(

@@ -97,6 +97,52 @@ class PrivateFileTests(unittest.TestCase):
                     connection.execute("DELETE FROM private_write")
 
 
+class ProductionDocsTests(unittest.TestCase):
+    def setUp(self):
+        self.signing_key = token_hex(32)
+        self.application = create_app(
+            Settings(_env_file=None, app_env="production", cors_allowed_origins=["https://economic-dash-web.onrender.com"]),
+            auth_settings=AuthSettings(_env_file=None, app_env="production", jwt_signing_key=self.signing_key),
+            database_settings=DatabaseSettings(_env_file=None, app_env="production"),
+            scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))
+        # Docs and missing-token guards need no lifespan or production disk.
+        self.client = TestClient(self.application)
+        self.addCleanup(self.client.close)
+
+    def test_production_docs_are_public_without_persisted_authorization_or_private_values(self):
+        with patch("app.main.Database.bootstrap", side_effect=AssertionError("Docs accessed database")):
+            docs = self.client.get("/docs")
+            schema = self.client.get("/openapi.json")
+        self.assertEqual(docs.status_code,200)
+        self.assertIn("text/html",docs.headers["content-type"])
+        self.assertIn('"persistAuthorization": false',docs.text)
+        self.assertIn("/openapi.json",docs.text)
+        self.assertEqual(schema.status_code,200)
+        self.assertEqual(self.client.get("/redoc").status_code,404)
+        self.assertEqual(self.client.get("/docs/oauth2-redirect").status_code,404)
+        for content in (docs.text,schema.text):
+            self.assertNotIn(self.signing_key,content)
+            self.assertNotIn("password_hash",content)
+
+    def test_openapi_documents_bearer_guards_and_protected_routes_still_require_login(self):
+        schema = self.client.get("/openapi.json").json()
+        scheme = schema["components"]["securitySchemes"]["DashboardBearer"]
+        self.assertEqual((scheme["type"],scheme["scheme"]),("http","bearer"))
+        self.assertEqual(schema["paths"]["/api/v1/auth/login"]["post"]["requestBody"]["content"].keys(),{"application/json"})
+        for path,operations in schema["paths"].items():
+            for method,operation in operations.items():
+                if path.startswith("/api/v1/") and path!="/api/v1/auth/login":
+                    self.assertIn({"DashboardBearer":[]},operation["security"],(path,method))
+                else:
+                    self.assertFalse(operation.get("security"),(path,method))
+        for path in ("/api/v1/auth/me","/api/v1/dashboard","/api/v1/indicators",
+                     "/api/v1/indicators/gdp_growth","/api/v1/indicators/gdp_growth/history?series_id=gdp_growth_world","/api/v1/ticker"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code,401)
+                self.assertEqual(response.headers["WWW-Authenticate"],"Bearer")
+
+
 class HttpBoundaryTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()

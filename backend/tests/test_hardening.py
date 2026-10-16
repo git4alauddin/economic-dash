@@ -159,7 +159,7 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200)  # Authenticated raw HTTP is valid.
         self.assertNotIn("access-control-allow-origin", result.headers)
 
-    def test_production_disables_docs_schema_and_local_cors_without_starting_hosted_storage(self):
+    def test_production_public_docs_preserve_bearer_and_exact_origin_guards_without_hosted_storage(self):
         origin = "https://dashboard.example.com"
         app = create_app(Settings(_env_file=None, app_env="production", cors_allowed_origins=[origin]),
             auth_settings=AuthSettings(_env_file=None, app_env="production", jwt_signing_key=token_hex(32)),
@@ -167,7 +167,9 @@ class HardeningTests(unittest.TestCase):
         # No lifespan: this checks production route/CORS wiring, not /var/data or TLS.
         client = TestClient(app)
         self.addCleanup(client.close)
-        for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+        for path in ("/docs", "/openapi.json"):
+            self.assertEqual(client.get(path).status_code, 200)
+        for path in ("/redoc", "/docs/oauth2-redirect"):
             self.assertEqual(client.get(path).status_code, 404)
         denied = client.get("/api/v1/dashboard", headers={"Origin": origin})
         self.assertEqual(denied.status_code, 401)

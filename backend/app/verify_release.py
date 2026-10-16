@@ -130,7 +130,7 @@ def handoff():
                         "evaluator_provision_from_backend": "python -m app.auth.provision --username evaluator"},
             "topology": "Two independent Render services: static React CDN and paid Python API. One API worker/instance; persistent /var/data/economic-dash for DB and scheduler locks. Blueprint: render.yaml.",
             "rollback": "Manually redeploy a verified Git SHA/deploy, then verify env/CORS/key settings and health. Disk/schema are NOT rolled back; take a SQLite-consistent backup before schema changes and verify restore compatibility. Auto-deploys remain off.",
-            "production_docs": "Disabled: /docs, /redoc, /openapi.json. M7 supplies evaluator-facing API reference.",
+            "production_docs": "Public Swagger at /docs and schema at /openapi.json; data routes require bearer authentication. Swagger authorization is not persisted; /redoc is disabled.",
             "evaluator_walkthrough": ["Provision on hosted persistent DB using hidden prompt; share credentials privately.",
                                       "Sign in; inspect six panels/ticker and source/as-of details; unavailable feeds stay unavailable.",
                                       "Change history window/period, inspect chart/table, reset Latest view and Refresh data.",
