@@ -1,5 +1,6 @@
 // Accept backend JSON on stdin and validate its actual frontend projection in memory.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
@@ -12,6 +13,8 @@ const server = await createServer({ root: fileURLToPath(new URL("../", import.me
   cacheDir: "node_modules/.cache/api-contract", plugins: [react()], server: { middlewareMode: true, hmr: false }, appType: "custom" });
 try {
   const { adaptDashboard } = await server.ssrLoadModule("/src/data/dashboard-adapter.ts");
+  const { panelBindings } = await server.ssrLoadModule("/src/data/dashboard-contract.ts");
+  const catalog = JSON.parse(await readFile(new URL("../../backend/app/data/source-catalog.json", import.meta.url), "utf8"));
   for (const payload of transcript ? transcript.filter((r) => r.status === 200).map((r) => r.body) : Array.isArray(payloads) ? payloads : [payloads]) {
     const snapshot = adaptDashboard(payload);
     assert.equal(Object.keys(snapshot.panels).length, 6);
@@ -19,9 +22,31 @@ try {
     assert.ok(!snapshot.issues.some((issue) => issue.includes("invalid") || issue.includes("unavailable")), snapshot.issues.join("; "));
     assert.equal(Object.values(snapshot.observations).reduce((n, entries) => n + Object.keys(entries).length, 0), 13);
     for (const [id, entries] of Object.entries(snapshot.observations)) {
+      assert.deepEqual(Object.keys(entries).sort(), panelBindings[id].series.map((s) => s.id).sort());
+      assert.equal(snapshot.panels[id].summaries.length, 2);
       const nonempty = Object.values(entries).some((entry) => entry.history.points.some((p) => p.value !== null));
       if (nonempty) assert.ok(snapshot.panels[id].chart, `${id}: populated chart was lost`);
-      for (const entry of Object.values(entries)) assert.deepEqual(entry.validationIssues, []);
+      for (const [sid, entry] of Object.entries(entries)) {
+        assert.deepEqual(entry.validationIssues, []);
+        const raw = payload.data.panels[id].series[sid];
+        assert.equal(entry.latest.value, raw.latest.value, `${sid}: decimal value changed`);
+        assert.equal(entry.latest.status, raw.latest.status, `${sid}: status changed`);
+        assert.deepEqual(entry.latest.sources, raw.latest.sources, `${sid}: attribution changed`);
+        if (raw.latest.as_of !== null) assert.equal(entry.latest.as_of.value, raw.latest.as_of, `${sid}: date changed`);
+        if (catalog.requirements[sid].status === "blocked") {
+          assert.equal(entry.latest.value, null);
+          assert.equal(entry.latest.reason_code, catalog.requirements[sid].reason_code);
+        }
+        assert.deepEqual(entry.history.points.map((p) => p.value), raw.history.points.map((p) => p.value), `${sid}: history changed`);
+      }
+      panelBindings[id].summaries.forEach((sid, slot) => {
+        assert.equal(snapshot.panels[id].summaries[slot].value, sid ? entries[sid].latest.value : null);
+      });
+    }
+    for (const quote of snapshot.ticker.items) {
+      assert.equal(quote.value, null);
+      assert.equal(quote.state, "unavailable");
+      assert.ok(catalog.requirements[quote.instrumentId].reason_code);
     }
   }
   if (transcript) {
@@ -40,7 +65,7 @@ try {
       else assert.equal(result.view.snapshot.observations.gdp_growth.gdp_growth_world.latest.status, item.expected_world_status);
       previous = result.view.snapshot;
     }
-    process.stdout.write("PASS conditional polling: changed/unchanged, expiry, recovery and auth clearing\n");
+    process.stdout.write("PASS conditional polling transcript and authorization clearing\n");
   }
   process.stdout.write("PASS backend v1 payloads accepted by frontend adapter\n");
 } finally {

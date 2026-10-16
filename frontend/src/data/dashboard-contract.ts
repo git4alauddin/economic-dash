@@ -2,8 +2,8 @@ import type { PanelPresentation, PlotSeries } from "../ui/panel-models";
 import type { TickerPresentation } from "../ui/ticker-model";
 import type { AsOfDate, DecimalValue, SourceReference, UiState, Unit } from "../ui/types";
 
-// Validated/normalized models. Draft wire interfaces live in dashboard-response.ts.
-// M4 must accept/finalize the projection; these are not backend implementation claims.
+// Validated/normalized display models; public v1 wire fields live in dashboard-response.ts.
+// M4 acceptance checks SQL/API payloads against this adapter and the panel bindings.
 export type DataStatus = Exclude<UiState, "loading">;
 export interface Observation {
   value: DecimalValue;
