@@ -8,6 +8,14 @@ A React and FastAPI dashboard for GDP growth, debt-to-GDP, trade, GST, inflation
 
 Evaluation credentials are shared privately. There is no public registration or default account.
 
+## Current status
+
+| Area | Status |
+| --- | --- |
+| Application | Deployed frontend and API; six-panel UI, charts, history controls, authentication and Seed/Live modes implemented. Hosted health and sign-in checked. |
+| Live coverage | Partial: five enabled sources. Debt-to-GDP, GST, RBI target and market quotes remain unavailable; history can be incomplete. See [Data and limitations](#data-and-limitations). Seed mode is illustrative. |
+| Verification | Local automated checks passed. Hosted security, collection and restart-persistence checks, plus exact Figma fidelity review, remain pending. |
+
 ## Explore the dashboard
 
 After sign-in, choose **Live** for available source-backed observations, dates and history, or **Seed** for a complete, labelled sample dashboard. Seed values are frontend fixtures; they never enter the database or fill gaps in Live mode.
@@ -18,12 +26,25 @@ Live mode refreshes the API every 60 seconds while the page is visible. The back
 
 ## How it works
 
-`React → authenticated FastAPI → private SQLite`, with a server-side collector fetching and validating upstream releases.
-
 - **Frontend:** React, TypeScript, Vite and SVG charts; responsive layout targeting 1214 × 2159 CSS pixels.
 - **Backend:** FastAPI, parameterized SQL, scheduled collection and checked schema migrations.
 - **Authentication:** Argon2id password hashes and 15-minute JWTs kept in browser memory. Reload, expiry and sign-out require a new sign-in.
 - **Hosting:** separate Render static-site and API services. SQLite lives on the API's persistent disk at `/var/data/economic-dash/dashboard.sqlite3`, with no database network listener or public file route.
+
+```mermaid
+flowchart LR
+    Web[React · Render static site]
+    Sources[Public data sources]
+    subgraph Backend[Render API service]
+        API[FastAPI]
+        Collector[Scheduled collector]
+        DB[(Private SQLite · persistent disk)]
+    end
+    Web -->|HTTPS · JWT · 60s polling| API
+    API -->|Read observations and users| DB
+    Collector -->|Fetch releases| Sources
+    Collector -->|Validate and store| DB
+```
 
 ## Data and limitations
 
