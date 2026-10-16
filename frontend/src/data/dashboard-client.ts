@@ -9,6 +9,37 @@ export class DashboardReadError extends Error {
 }
 type ReadResult = { unchanged: true; etag: string | null } | { unchanged: false; etag: string | null; body: unknown };
 const validEtag = (value: string | null) => value && value.length <= 256 && /^(?:W\/)?"[\x21\x23-\x7E]*"$/.test(value) ? value : null;
+async function boundedDashboardJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const limit = 2_000_000, length = response.headers.get("Content-Length");
+  if (length !== null && (!/^\d{1,10}$/.test(length) || Number(length) > limit)) {
+    void response.body?.cancel().catch(() => {});
+    throw new DashboardReadError("invalid");
+  }
+  if (!response.body) throw new DashboardReadError("invalid");
+  const reader = response.body.getReader(), parts: Uint8Array[] = [];
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  let size = 0;
+  try {
+    signal.throwIfAborted();
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) { cancel(); throw new DashboardReadError("invalid"); }
+      parts.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+    try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown; }
+    catch { throw new DashboardReadError("invalid"); }
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
 async function fetchDashboard(signal: AbortSignal, token: string, transport: DashboardTransport, etag: string | null = null): Promise<ReadResult> {
   signal.throwIfAborted();
   if (!token.trim()) throw new DashboardReadError("unauthorized");
@@ -21,10 +52,9 @@ async function fetchDashboard(signal: AbortSignal, token: string, transport: Das
     if (response.status === 401 || response.status === 403) throw new DashboardReadError("unauthorized");
     if (response.status === 304) return { unchanged: true, etag: validEtag(response.headers.get("ETag")) };
     if (!response.ok) throw new DashboardReadError("network");
-    const body = await response.text();
+    const body = await boundedDashboardJson(response, requestSignal);
     requestSignal.throwIfAborted();
-    if (body.length > 2_000_000) throw new DashboardReadError("invalid");
-    try { return { unchanged: false, body: JSON.parse(body) as unknown, etag: validEtag(response.headers.get("ETag")) }; } catch { throw new DashboardReadError("invalid"); }
+    return { unchanged: false, body, etag: validEtag(response.headers.get("ETag")) };
   } catch (error) {
     signal.throwIfAborted();
     throw error instanceof DashboardReadError ? error : new DashboardReadError("network");

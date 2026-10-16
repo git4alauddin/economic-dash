@@ -336,6 +336,68 @@ try {
     const raw = dashboardFixture(); raw.meta.generated_at = "2030-01-01T00:00:00Z";
     assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.summaries[0].state, "fresh");
   });
+  await test("dashboard body limits count streamed UTF-8 bytes and reject oversized headers without retrying", async () => {
+    for (const advertised of [false, true]) {
+      let canceled = false, calls = 0;
+      const body = new ReadableStream({ start(stream) { stream.enqueue(new TextEncoder().encode('"' + '€'.repeat(700_000))); }, cancel() { canceled = true; } });
+      const result = await client.loadDashboard(null, new AbortController().signal, "test", async () => {
+        calls++; return new Response(body, { headers: advertised ? { "Content-Length": "2000001" } : {} });
+      });
+      assert.equal(result.snapshot, null);
+      assert.equal(result.message, "Unable to validate the dashboard response.");
+      assert.equal(calls, 1);
+      assert.equal(canceled, true);
+    }
+  });
+  await test("dashboard streaming preserves split UTF-8 and rejects malformed UTF-8 safely", async () => {
+    const raw = dashboardFixture(); raw.data.panels.gdp_growth.series.gdp_growth_world.latest.sources[0].name = "Synthetic ₹ publisher";
+    const bytes = new TextEncoder().encode(JSON.stringify(raw));
+    let offset = 0;
+    const body = new ReadableStream({ pull(stream) {
+      if (offset >= bytes.length) { stream.close(); return; }
+      stream.enqueue(bytes.slice(offset, offset += 7));
+    } });
+    const result = await client.loadDashboard(null, new AbortController().signal, "test", async () => new Response(body));
+    assert.equal(result.snapshot.observations.gdp_growth.gdp_growth_world.latest.sources[0].name, "Synthetic ₹ publisher");
+    const bad = await client.loadDashboard(null, new AbortController().signal, "test", async () => new Response(new Uint8Array([0xc3, 0x28])));
+    assert.equal(bad.message, "Unable to validate the dashboard response.");
+    assert.equal(bad.snapshot, null);
+  });
+  await test("fifteen-second budget interrupts a stalled body, retains permitted data and permits a full recovery", async () => {
+    const originalTimeout = AbortSignal.timeout;
+    let deadline, canceled = false, started, calls = 0;
+    const reading = new Promise((resolve) => { started = resolve; });
+    AbortSignal.timeout = (milliseconds) => { assert.equal(milliseconds, 15_000); deadline = new AbortController(); return deadline.signal; };
+    try {
+      const reader = client.createDashboardReader(async (_url, options) => {
+        calls++;
+        if (calls === 2) return new Response(new ReadableStream({ pull() { started(); }, cancel() { canceled = true; } }, { highWaterMark: 0 }));
+        assert.equal(options.headers["If-None-Match"], undefined);
+        return new Response(JSON.stringify(dashboardFixture()), { headers: { ETag: '"bounded"' } });
+      });
+      const first = await reader.read(new AbortController().signal, "test");
+      const pending = reader.read(new AbortController().signal, "test");
+      await reading; deadline.abort(new DOMException("Synthetic deadline", "TimeoutError"));
+      const failed = await pending;
+      assert.equal(canceled, true);
+      assert.equal(calls, 2);
+      assert.equal(failed.view.snapshot.observations.gdp_growth.gdp_growth_world.latest.value, first.view.snapshot.observations.gdp_growth.gdp_growth_world.latest.value);
+      assert.equal(failed.view.snapshot.observations.gdp_growth.gdp_growth_world.latest.status, "stale");
+      assert.equal((await reader.read(new AbortController().signal, "test")).view.snapshot.observations.gdp_growth.gdp_growth_world.latest.status, "fresh");
+      assert.equal(calls, 3);
+    } finally { AbortSignal.timeout = originalTimeout; }
+  });
+  await test("caller cancellation stops a stalled body without publishing a failure snapshot", async () => {
+    let canceled = false, started;
+    const reading = new Promise((resolve) => { started = resolve; });
+    const controller = new AbortController();
+    const pending = client.loadDashboard(null, controller.signal, "test", async () => new Response(new ReadableStream({
+      pull() { started(); }, cancel() { canceled = true; },
+    }, { highWaterMark: 0 })));
+    await reading; controller.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(canceled, true);
+  });
   await test("conditional reader retains a validated snapshot on 304 without rewriting its dates", async () => {
     let calls = 0;
     const reader = client.createDashboardReader(async (_url, options) => {

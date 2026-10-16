@@ -18,6 +18,8 @@ const temporary = await mkdtemp(join(tmpdir(), "economic-dash-browser-"));
 const site = join(temporary, "site"), profile = join(temporary, "profile");
 let browser, socket, web;
 const pending = new Map(), requests = [], network = [], statuses = [], errors = [];
+const dashboardRequests = new Set(), dashboardBodies = [], captures = [];
+const runtimeErrors = new Map();
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await probe()) return; await delay(50); }
@@ -52,7 +54,12 @@ try {
   let id = 0;
   socket.addEventListener("message", ({ data }) => {
     const item = JSON.parse(data);
-    if (item.method === "Runtime.exceptionThrown") errors.push(item.params.exceptionDetails.text);
+    if (item.method === "Runtime.exceptionThrown") {
+      const detail = item.params.exceptionDetails;
+      runtimeErrors.set(detail.exceptionId, { text: detail.text, kind: detail.exception?.className,
+        frames: detail.stackTrace?.callFrames.map(({ functionName, lineNumber }) => ({ functionName, lineNumber })) });
+    }
+    if (item.method === "Runtime.exceptionRevoked") runtimeErrors.delete(item.params.exceptionId);
     if (item.method === "Network.requestWillBeSent") network.push(item.params.request.url);
     if (item.method === "Network.webSocketCreated") network.push(item.params.url);
     if (item.method === "Network.requestWillBeSent" && item.params.type === "Fetch") {
@@ -60,7 +67,17 @@ try {
       requests.push({ url: request.url, method: request.method, authenticated: !!request.headers.Authorization,
         conditional: !!request.headers["If-None-Match"] });
     }
-    if (item.method === "Network.responseReceived" && item.params.response.url === `${config.api_url}/api/v1/dashboard`) statuses.push(item.params.response.status);
+    if (item.method === "Network.responseReceived" && item.params.type === "Fetch" && item.params.response.url === `${config.api_url}/api/v1/dashboard`) {
+      statuses.push(item.params.response.status);
+      // Only the first full response is needed for the source trace. Later
+      // responses can disappear during intentional reload/logout/cancellation.
+      if (item.params.response.status === 200 && captures.length === 0) dashboardRequests.add(item.params.requestId);
+    }
+    if (item.method === "Network.loadingFinished" && dashboardRequests.delete(item.params.requestId)) {
+      captures.push(command("Network.getResponseBody", { requestId: item.params.requestId }).then((result) => {
+        dashboardBodies.push(JSON.parse(result.base64Encoded ? Buffer.from(result.body, "base64").toString("utf8") : result.body));
+      }).catch(() => { errors.push("Dashboard response capture failed"); }));
+    }
     const callback = pending.get(item.id);
     if (callback) { clearTimeout(callback.timer); pending.delete(item.id); item.error ? callback.reject(Error(item.error.message)) : callback.accept(item.result); }
   });
@@ -84,6 +101,29 @@ try {
     process.stdout.write(JSON.stringify({ control: action }) + "\n");
     assert.equal(JSON.parse((await lines.next()).value).ok, true);
   };
+  const assertWorldTrace = async (expectedState) => {
+    const expected = config.world_trace;
+    const dom = await evaluate(`(() => {
+      const panel=document.querySelector('[data-panel-id="gdp_growth"]');
+      const details=panel.querySelector('.panel-data-details');
+      if(!details.open) details.querySelector('summary').click();
+      const series=Array.from(details.querySelectorAll('section')).find(section=>section.querySelector('h3')?.textContent.startsWith('World '));
+      const footer=series.querySelector('.source-as-of');
+      const row=Array.from(series.querySelectorAll('tbody tr')).find(row=>row.querySelector('th').textContent===${JSON.stringify(expected.period.label)});
+      return {display:panel.querySelector('.summary-value[aria-label="World"] .summary-number').textContent,
+        date:footer.lastElementChild.textContent.trim(),links:Array.from(footer.querySelectorAll('a')).map(a=>({name:a.textContent,url:a.href})),
+        nonNse:footer.querySelectorAll('.source-tag').length,history:row?.querySelector('td').textContent,
+        state:series.getAttribute('data-series-state'),visible:footer.getBoundingClientRect().height>0};
+    })()`);
+    assert.equal(dom.display, expected.display, "Rendered World GDP differs from publisher/SQL value");
+    assert.equal(dom.history, expected.display, "World history row differs from publisher/SQL value");
+    assert.equal(dom.date, `Period ending ${expected.year}`, "World as-of precision/date changed");
+    assert.deepEqual(dom.links, expected.sources.map(({ name, url }) => ({ name, url })), "World publisher links changed");
+    assert.equal(dom.nonNse, expected.sources.length);
+    assert.equal(dom.state, expectedState);
+    assert.equal(dom.visible, true, "World source/date details are not visible");
+    await evaluate(`document.querySelector('[data-panel-id="gdp_growth"] .panel-data-details').open=false`);
+  };
   await command("Page.enable"); await command("Runtime.enable"); await command("Network.enable");
   await command("Emulation.setDeviceMetricsOverride", { width: 1214, height: 2159, deviceScaleFactor: 1, mobile: false });
   await command("Page.addScriptToEvaluateOnNewDocument", { source: `
@@ -95,11 +135,20 @@ try {
   assert.equal(requests.length, 0, "Signed-out UI fetched protected data");
   assert.equal(await evaluate(`document.activeElement.id`), "username");
   assert.equal(await evaluate(`document.querySelector('#password').type`), "password");
+  assert.equal(await evaluate(`fetch(${JSON.stringify(config.api_url + "/api/v1/dashboard")},{credentials:'omit',cache:'no-store'}).then(response=>response.status)`), 401,
+    "Direct unauthenticated browser request reached protected data");
   await signIn("incorrect synthetic password");
   await visible(`!!document.querySelector('[role="alert"]') && !document.querySelector('#username').disabled`, "generic credential failure");
   assert.equal(await evaluate(`document.querySelector('#password').value`), "");
   assert.equal(requests.filter((r) => r.url.endsWith("/auth/login")).length, 1);
   await signIn(); await dashboard();
+  await waitFor(() => dashboardBodies.length > 0, "actual dashboard response capture");
+  const world = dashboardBodies[0].data.panels.gdp_growth.series.gdp_growth_world.latest;
+  for (const field of ["value", "unit", "definition_id", "vintage_id", "sources"]) assert.deepEqual(world[field], config.world_trace[field], "Publisher/SQL/API World trace mismatch");
+  assert.deepEqual(world.observation_period, config.world_trace.period);
+  assert.equal(world.as_of, config.world_trace.year);
+  assert.equal(world.as_of_precision, "year");
+  await assertWorldTrace(world.status);
   assert.equal(await evaluate(`document.querySelector('.indicator-grid').children.length`), 6);
   assert.ok(await evaluate(`document.querySelectorAll('a[href^="https://"]').length>0`), "Real publisher attribution was lost");
   assert.equal((await command("Network.getCookies")).cookies.length, 0);
@@ -113,9 +162,11 @@ try {
   await click("Refresh data");
   await visible(`document.querySelector('.dashboard-feedback')?.textContent.includes('stale')`, "offline retained state");
   assert.ok(await evaluate(`!!document.querySelector('[data-dashboard-root]')`));
+  await assertWorldTrace("stale");
   assert.equal(requests.filter((r) => r.url.endsWith("/auth/login")).length, loginCount, "Password was replayed after a data error");
   await command("Network.setBlockedURLs", { urls: [] });
   await click("Refresh data"); await dashboard();
+  await assertWorldTrace(world.status);
   await click("Sign out");
   await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, "logout clears data");
   const beforeSignIn = requests.length;
@@ -125,16 +176,19 @@ try {
   await command("Page.reload", { ignoreCache: true });
   await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, "reload requires sign-in");
   await signIn(); await dashboard();
+  const unauthorizedBeforeRevocation = statuses.filter((status) => status === 401).length;
   await control("disable");
   await click("Refresh data");
   await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, "real revoked-account 401 clears data");
-  assert.ok(statuses.includes(401));
+  assert.ok(statuses.filter((status) => status === 401).length > unauthorizedBeforeRevocation);
   await control("enable");
   await signIn(); await dashboard();
   await command("Emulation.setVirtualTimePolicy", { policy: "pauseIfNetworkFetchesPending", budget: 901000, maxVirtualTimeTaskStarvationCount: 100 });
   await visible(`!!document.querySelector('#username')&&document.querySelector('[role="alert"]')?.textContent.includes('expired')`, "client expiry clears session");
   assert.equal(await evaluate(`!!document.querySelector('[data-dashboard-root]')`), false);
-  assert.equal(errors.length, 0, "Browser runtime exception");
+  await Promise.all(captures);
+  assert.equal(errors.length, 0, "Browser response capture failed");
+  assert.equal(runtimeErrors.size, 0, "Unhandled browser exceptions: " + JSON.stringify([...runtimeErrors.values()]));
   assert.ok(requests.every((r) => r.url.startsWith(config.api_url + "/api/v1/")), "Browser contacted an unexpected data source");
   const frontendOrigin = `http://127.0.0.1:${config.frontend_port}`;
   assert.ok(network.length > 0 && network.every((url) => {
@@ -145,7 +199,8 @@ try {
   await command("Browser.close");
   process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 10, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
-    network_boundary_verified: true }) + "\n");
+    network_boundary_verified: true, world_source_sql_api_ui_verified: true,
+    world_failure_recovery_verified: true, direct_unauthorized_rejected: true }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

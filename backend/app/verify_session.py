@@ -21,12 +21,14 @@ import uvicorn
 from app.auth.settings import AuthSettings
 from app.auth.users import UserStore
 from app.collectors.catalog import SourceRegistry
+from app.collectors.http_client import CollectorHttpClient
 from app.collectors.runner import CollectionRunner
 from app.config import BACKEND_DIRECTORY, DatabaseSettings, SchedulerSettings, Settings
 from app.database import Database
 from app.main import create_app
 from app.repository import SQLiteCollectionRepository
 from app.verify_integration import require
+from app.verify_world_trace import world_gdp_trace
 
 
 async def verify(*, all_sources=False):
@@ -38,11 +40,20 @@ async def verify(*, all_sources=False):
         database = Database(settings)
         database.bootstrap()
         sources = SourceRegistry.load().source_ids if all_sources else ("world_bank_gdp",)
+        receipts = {}
+        class TracedClient(CollectorHttpClient):
+            async def fetch(self, resource_id, **options):
+                result = await super().fetch(resource_id, **options)
+                if resource_id in {"world_bank_gdp", "world_bank_gdp.metadata"} and result.body is not None:
+                    receipts[resource_id] = result
+                return result
         runner = CollectionRunner(SchedulerSettings(_env_file=None, state_directory=root / "locks"),
-                                  repository=SQLiteCollectionRepository(database))
+                                  repository=SQLiteCollectionRepository(database), client_factory=TracedClient)
         collected = await runner.run(sources, trigger="browser_session_verification", history=all_sources)
         require(collected.persisted and collected.status in {"prepared", "unchanged"} and not collected.failures,
                 "Real-source browser fixture collection failed.")
+        trace = world_gdp_trace(database, receipts["world_bank_gdp"], receipts["world_bank_gdp.metadata"])
+        receipts.clear()  # Publisher bodies stay transient and never reach the browser.
         username, password = "browser_check", token_urlsafe(32)
         users = UserStore(database)
         users.provision(username, password)
@@ -71,7 +82,7 @@ async def verify(*, all_sources=False):
             watchdog = Timer(120, process.kill)
             watchdog.start()
             process.stdin.write(json.dumps({"api_url": api_url, "frontend_port": frontend_port,
-                                           "username": username, "password": password}) + "\n")
+                                           "username": username, "password": password, "world_trace": trace}) + "\n")
             process.stdin.flush()
             result = None
             for line in process.stdout:
