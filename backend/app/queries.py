@@ -176,9 +176,12 @@ class DashboardQueries:
         for sid in dependencies:
             definition = self.catalog["requirements"][sid]
             remaining = MAX_QUERY_ROWS - len(points)
+            # Match the immutable identity index's period prefix. Ordering by
+            # period_end instead makes SQLite scan the series archive; history
+            # resolution below independently sorts publication/revision dates.
             rows = connection.execute("""SELECT * FROM observations WHERE series_id=? AND definition_id=? AND source_id=?
                 AND period_id IN (SELECT value FROM json_each(?))
-                ORDER BY period_end,published_at,dataset_updated_at,retrieved_at,vintage_id LIMIT ?""",
+                ORDER BY period_id,vintage_id,parser_version LIMIT ?""",
                 (sid, definition["definition_id"], definition["source_id"], json.dumps(sorted(periods)), remaining + 1)).fetchall()
             if len(rows) > remaining:
                 raise QueryLimitExceeded("Requested history has too many revisions; narrow the window.")
@@ -278,7 +281,7 @@ class DashboardQueries:
         if series_id not in self.series_ids:
             raise UnknownSeries(series_id)
         now = self._options(window, now)
-        with self.database.connection() as connection:
+        with self.database.connection(read_only=True) as connection:
             version = self._begin(connection)
             return replace(self._series(connection, series_id, window, end_period_id, now),
                            source_states=self._states(connection), checkpoint_run_id=version)
@@ -287,14 +290,14 @@ class DashboardQueries:
                   now: datetime | None = None) -> IndicatorRead:
         selections = self._selections(indicator_id, end_periods)
         now = self._options(window, now)
-        with self.database.connection() as connection:
+        with self.database.connection(read_only=True) as connection:
             version = self._begin(connection)
             return replace(self._indicator(connection, indicator_id, window, selections, now),
                            source_states=self._states(connection), checkpoint_run_id=version)
 
     def dashboard(self, *, window: int = 5, now: datetime | None = None) -> DashboardRead:
         now = self._options(window, now)
-        with self.database.connection() as connection:
+        with self.database.connection(read_only=True) as connection:
             version = self._begin(connection)
             states = self._states(connection)
             panels = tuple(replace(self._indicator(connection, indicator, window, {}, now), source_states=states,
@@ -305,5 +308,5 @@ class DashboardQueries:
 
     def ticker_version(self) -> str | None:
         """Current ticker is gated; read its committed version without querying macro history."""
-        with self.database.connection() as connection:
+        with self.database.connection(read_only=True) as connection:
             return self._begin(connection)

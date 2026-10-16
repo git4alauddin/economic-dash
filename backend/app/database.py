@@ -13,6 +13,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+from threading import BoundedSemaphore
+from time import monotonic
 from typing import Iterator
 
 from app.config import DatabaseSettings, get_database_settings, get_settings
@@ -24,6 +26,7 @@ class Database:
 
     def __init__(self, settings: DatabaseSettings):
         self.settings = settings
+        self._connections = BoundedSemaphore(settings.max_connections)
 
     def _check_files(self) -> None:
         for suffix in ("", "-wal", "-shm", "-journal"):
@@ -62,11 +65,27 @@ class Database:
             migrate(connection)
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Open an existing file only; close and roll back any unfinished work."""
+    def connection(self, *, read_only: bool = False) -> Iterator[sqlite3.Connection]:
+        """Fail fast at capacity; readers cannot acquire SQLite write capability.
+
+        Slots are process-local (M7 must keep one worker). Read execution has a
+        cumulative wall-clock budget checked every 1,000 SQLite VM instructions;
+        this is not a cancellation deadline for arbitrary Python work.
+        """
+        if not self._connections.acquire(blocking=False):
+            raise sqlite3.OperationalError("Database connection capacity reached.")
+        try:
+            with self._connection(read_only=read_only) as connection:
+                yield connection
+        finally:
+            self._connections.release()
+
+    @contextmanager
+    def _connection(self, *, read_only: bool) -> Iterator[sqlite3.Connection]:
+        """Open an existing file only; close and roll back unfinished work."""
         self._check_files()
         connection = sqlite3.connect(
-            self.settings.path.as_uri() + "?mode=rw", uri=True,
+            self.settings.path.as_uri() + ("?mode=ro" if read_only else "?mode=rw"), uri=True,
             timeout=self.settings.busy_timeout, autocommit=True,
         )
         try:
@@ -74,11 +93,16 @@ class Database:
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA trusted_schema=OFF")
+            if read_only:
+                connection.execute("PRAGMA query_only=ON")
+                deadline = monotonic() + self.settings.read_timeout
+                connection.set_progress_handler(lambda: int(monotonic() >= deadline), 1000)
             if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
                 raise RuntimeError("SQLite foreign-key enforcement is required.")
             yield connection
         finally:
             try:
+                connection.set_progress_handler(None, 0)
                 if connection.in_transaction:
                     connection.execute("ROLLBACK")
             finally:

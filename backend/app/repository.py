@@ -80,7 +80,7 @@ class SQLiteCollectionRepository:
         return checkpoint
 
     def load(self) -> StoredCheckpoint | None:
-        with self.database.connection() as connection:
+        with self.database.connection(read_only=True) as connection:
             connection.execute("BEGIN")  # One consistent read snapshot, closed/rolled back on exit.
             return self._load(connection)
 

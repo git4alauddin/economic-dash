@@ -43,6 +43,14 @@ def queries(request: Request) -> DashboardQueries:
     return service
 
 
+def bounded_query(request: Request) -> None:
+    """Bound aggregate input and reject ambiguous repeated scalar parameters."""
+    if len(request.scope.get("query_string", b"")) > 4096 or len(request.query_params.multi_items()) > 16:
+        raise ApiError(422, "query_limit_exceeded", "Query parameters exceed the request limit.")
+    if any(len(request.query_params.getlist(key)) > 1 for key in request.query_params if key != "period"):
+        raise ApiError(422, "invalid_query", "Scalar query parameters cannot be repeated.")
+
+
 class WindowQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     window: int = Field(default=5, ge=1, le=24, description="Completed periods in each series' own fiscal/calendar cadence.")
@@ -76,7 +84,7 @@ ERRORS = {status: {"model": ErrorEnvelope, "description": description} for statu
     (401, "Authentication required"), (404, "Unknown indicator or series"), (422, "Invalid query or period"),
     (503, "Storage, stored data, or authentication integration unavailable"), (500, "Invalid server response"))}
 ERRORS[304] = {"description": "Representation including freshness is unchanged; no response body."}
-router = APIRouter(prefix="/api/v1", tags=["dashboard"], dependencies=[Depends(require_dashboard_access)], responses=ERRORS)
+router = APIRouter(prefix="/api/v1", tags=["dashboard"], dependencies=[Depends(require_dashboard_access), Depends(bounded_query)], responses=ERRORS)
 IndicatorPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")]
 Service = Annotated[DashboardQueries, Depends(queries)]
 
@@ -147,7 +155,7 @@ def install_api(application: FastAPI) -> None:
         try:
             if database is None:
                 raise RuntimeError("Storage is not initialized")
-            with database.connection() as connection:
+            with database.connection(read_only=True) as connection:
                 connection.execute("PRAGMA query_only=ON")
                 connection.execute("BEGIN")
                 if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:

@@ -80,6 +80,8 @@ class DatabaseSettings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     directory: Path | None = None
     busy_timeout: float = Field(default=5, gt=0, le=30)
+    max_connections: int = Field(default=8, ge=1, le=32)
+    read_timeout: float = Field(default=2, gt=0, le=10)
 
     @model_validator(mode="after")
     def validate_directory(self) -> Self:
