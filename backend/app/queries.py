@@ -92,6 +92,8 @@ class DashboardQueries:
         self.fingerprint = catalog_fingerprint()
         self.panels = {p["indicator_id"]: p for p in self.inventory["panels"]}
         self.series_ids = {s["id"] for p in self.panels.values() for s in p["series"]}
+        # Main wires a read-only callback for explicitly uncommitted failure metadata.
+        self.runtime_failure_states = lambda: ()
 
     @staticmethod
     def _states(connection) -> tuple[SourceState, ...]:

@@ -105,6 +105,11 @@ class RunSummary:
 
 
 class CollectionRunner:
+    def volatile_failure_states(self):
+        if self.last_run is None or self.last_run.persisted:
+            return ()
+        return tuple(s for s in self.cache.source_states() if s.run_id == self.last_run.run_id and s.failure_reason)
+
     def __init__(
         self, settings: SchedulerSettings, *,
         client_factory: Callable[[], CollectorHttpClient] = CollectorHttpClient,

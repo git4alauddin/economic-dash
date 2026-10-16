@@ -46,6 +46,15 @@ class ResponseObservation(WireModel):
     normalization_id: str | None = None
     transform_id: str | None = None
     inputs: tuple[NormalizedObservation, ...] = ()
+    last_attempt_at: datetime | None = None
+    last_checked_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_changed_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    publication_deadline: datetime | None = None
+    check_deadline: datetime | None = None
+    freshness_policy_version: str | None = None
+    failure_state_persisted: bool | None = None
 
     @model_validator(mode="after")
     def explicit_value_state(self):
@@ -142,6 +151,12 @@ class ResponseMeta(WireModel):
     generated_at: datetime
     version: str
     partial: bool
+    data_version: str
+    poll_interval_seconds: Literal[60] = 60
+
+
+class HealthResponse(WireModel):
+    status: Literal["ok", "unavailable"]
 
 
 T = TypeVar("T")

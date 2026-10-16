@@ -71,7 +71,7 @@ class ApiTests(unittest.TestCase):
         body = self.get("/api/v1/dashboard")
         Envelope[DashboardData].model_validate_json(self.client.get("/api/v1/dashboard").text)
         self.assertEqual(body["meta"]["api_version"], "v1")
-        self.assertEqual(body["meta"]["version"], "empty")
+        self.assertEqual(body["meta"]["data_version"], "empty")
         self.assertTrue(body["meta"]["partial"])
         self.assertEqual(len(body["data"]["panels"]), 6)
         self.assertEqual(sum(len(p["summaries"]) for p in body["data"]["panels"].values()), 12)
@@ -91,7 +91,7 @@ class ApiTests(unittest.TestCase):
     def test_populated_dashboard_preserves_decimal_provenance_and_compatible_chart_axes(self):
         self.populate()
         body = self.get("/api/v1/dashboard")
-        self.assertEqual(body["meta"]["version"], "first")
+        self.assertEqual(body["meta"]["data_version"], "first")
         panels = body["data"]["panels"]
         world = panels["gdp_growth"]["series"]["gdp_growth_world"]["latest"]
         self.assertEqual(world["value"], "2.123456789012345678")
@@ -167,7 +167,7 @@ class ApiTests(unittest.TestCase):
         now = NOW + timedelta(hours=1)
         self.assertTrue(cache.record_failure(tuple(self.repository.load().envelope.source_ids), run_id="outage", started=now, finished=now, reason="timeout"))
         after = self.get("/api/v1/dashboard")
-        self.assertEqual(after["meta"]["version"], "outage")
+        self.assertEqual(after["meta"]["data_version"], "outage")
         for indicator, panel in after["data"]["panels"].items():
             for sid, entry in panel["series"].items():
                 if entry["latest"]["value"] is not None:

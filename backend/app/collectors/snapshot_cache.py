@@ -141,6 +141,9 @@ class SnapshotCache:
     def get(self, resource_id: str) -> AcceptedResource | None:
         return self._resources.get(resource_id)
 
+    def source_states(self) -> tuple[SourceState, ...]:
+        return tuple(self._states.values())
+
     def seed(self, client, sources: tuple[str, ...]) -> None:
         for source in sources:
             dynamic = [entry for entry in self._resources.values() if entry.resource_id.startswith(f"{source}.release.")]

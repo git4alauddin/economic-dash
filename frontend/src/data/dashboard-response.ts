@@ -21,6 +21,15 @@ export interface ResponseObservation {
   status: DataStatus;
   reason_code: string | null;
   retention_allowed: boolean;
+  last_attempt_at?: string | null;
+  last_checked_at?: string | null;
+  last_success_at?: string | null;
+  last_changed_at?: string | null;
+  last_failure_at?: string | null;
+  publication_deadline?: string | null;
+  check_deadline?: string | null;
+  freshness_policy_version?: string | null;
+  failure_state_persisted?: boolean | null;
 }
 export interface ResponseComparison {
   value: DecimalValue;
@@ -73,5 +82,5 @@ export interface DashboardResponseV1Draft {
       items: readonly ResponseQuote[];
     };
   };
-  meta: { api_version: "v1"; generated_at: string; version: string; partial: boolean };
+  meta: { api_version: "v1"; generated_at: string; version: string; partial: boolean; data_version?: string; poll_interval_seconds?: 60 };
 }

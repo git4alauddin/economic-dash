@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,8 +16,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException
 
 from app import api_projection as project
-from app.api_models import CatalogIndicator, DashboardData, Envelope, ErrorEnvelope, HistoryData, ResponsePanel, ResponseTicker
+from app.api_models import CatalogIndicator, DashboardData, Envelope, ErrorEnvelope, HealthResponse, HistoryData, ResponsePanel, ResponseTicker
 from app.queries import DashboardQueries, QueryIntegrityError, QueryLimitExceeded, UnknownIndicator, UnknownSeries
+from app.migrations import SCHEMA_VERSION
+from app.update_delivery import conditional_response
 
 
 class ApiError(Exception):
@@ -73,25 +75,28 @@ def read(operation):
 ERRORS = {status: {"model": ErrorEnvelope, "description": description} for status, description in (
     (401, "Authentication required"), (404, "Unknown indicator or series"), (422, "Invalid query or period"),
     (503, "Storage, stored data, or authentication integration unavailable"), (500, "Invalid server response"))}
+ERRORS[304] = {"description": "Representation including freshness is unchanged; no response body."}
 router = APIRouter(prefix="/api/v1", tags=["dashboard"], dependencies=[Depends(require_dashboard_access)], responses=ERRORS)
 IndicatorPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")]
 Service = Annotated[DashboardQueries, Depends(queries)]
 
 
 @router.get("/dashboard", response_model=Envelope[DashboardData], summary="Six panels and ticker from one SQL snapshot")
-def dashboard(service: Service, options: Annotated[WindowQuery, Query()]):
+def dashboard(service: Service, options: Annotated[WindowQuery, Query()], request: Request, response: Response):
     now = datetime.now(timezone.utc)
-    return read(lambda: project.dashboard(service, service.dashboard(window=options.window, now=now), now))
+    body = read(lambda: project.dashboard(service, service.dashboard(window=options.window, now=now), now))
+    return conditional_response(request, response, body)
 
 
 @router.get("/indicators", response_model=Envelope[tuple[CatalogIndicator, ...]], summary="Indicator definitions and available periods within the requested window")
-def indicators(service: Service, options: Annotated[WindowQuery, Query()]):
+def indicators(service: Service, options: Annotated[WindowQuery, Query()], request: Request, response: Response):
     now = datetime.now(timezone.utc)
-    return read(lambda: project.catalog(service, service.dashboard(window=options.window, now=now), now))
+    body = read(lambda: project.catalog(service, service.dashboard(window=options.window, now=now), now))
+    return conditional_response(request, response, body)
 
 
 @router.get("/indicators/{indicator_id}", response_model=Envelope[ResponsePanel], summary="Panel summaries and histories; select each series' period independently")
-def indicator(indicator_id: IndicatorPath, service: Service, options: Annotated[PanelQuery, Query()]):
+def indicator(indicator_id: IndicatorPath, service: Service, options: Annotated[PanelQuery, Query()], request: Request, response: Response):
     def operation():
         selections = {}
         for item in options.period:
@@ -104,11 +109,11 @@ def indicator(indicator_id: IndicatorPath, service: Service, options: Annotated[
         result = project.panel(service, value, now)
         return Envelope[ResponsePanel](data=result, meta=project.meta(value.checkpoint_run_id, now,
             any(entry.latest.value is None or entry.history.status != "fresh" or any(p.value is None for p in entry.history.points) for entry in result.series.values())))
-    return read(operation)
+    return conditional_response(request, response, read(operation))
 
 
 @router.get("/indicators/{indicator_id}/history", response_model=Envelope[HistoryData], summary="Bounded history for one series, with comparison inputs and revision trace")
-def history(indicator_id: IndicatorPath, service: Service, options: Annotated[HistoryQuery, Query()]):
+def history(indicator_id: IndicatorPath, service: Service, options: Annotated[HistoryQuery, Query()], request: Request, response: Response):
     def operation():
         service._selections(indicator_id, None)
         allowed = {entry["id"] for entry in service.panels[indicator_id]["series"]}
@@ -116,11 +121,11 @@ def history(indicator_id: IndicatorPath, service: Service, options: Annotated[Hi
             raise UnknownSeries(options.series_id)
         now = datetime.now(timezone.utc)
         return project.history(service, service.series(options.series_id, window=options.window, end_period_id=options.end_period_id, now=now), now)
-    return read(operation)
+    return conditional_response(request, response, read(operation))
 
 
 @router.get("/ticker", response_model=Envelope[ResponseTicker], summary="Explicitly unavailable market quotes until source gates are cleared")
-def ticker(service: Service, request: Request):
+def ticker(service: Service, request: Request, response: Response):
     # Use the committed read snapshot for a truthful version; no quote fetching.
     def operation():
         if request.query_params:
@@ -128,11 +133,32 @@ def ticker(service: Service, request: Request):
         now = datetime.now(timezone.utc)
         version = service.ticker_version()
         return Envelope[ResponseTicker](data=project.ticker(service), meta=project.meta(version, now))
-    return read(operation)
+    return conditional_response(request, response, read(operation))
 
 
 def install_api(application: FastAPI) -> None:
     application.include_router(router)
+
+    @application.get("/health", response_model=HealthResponse, tags=["operations"],
+                     responses={503: {"model": HealthResponse, "description": "Local database is not ready."}})
+    def health(request: Request, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        database = getattr(request.app.state, "database", None)
+        try:
+            if database is None:
+                raise RuntimeError("Storage is not initialized")
+            with database.connection() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                connection.execute("BEGIN")
+                if connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+                    raise RuntimeError("Schema is not ready")
+                connection.execute("SELECT observation_id FROM observations LIMIT 0")
+                if not connection.execute("SELECT 1 FROM schema_migrations WHERE version=?", (SCHEMA_VERSION,)).fetchone():
+                    raise RuntimeError("Migration is not ready")
+        except (sqlite3.Error, OSError, RuntimeError):
+            response.status_code = 503
+            return HealthResponse(status="unavailable")
+        return HealthResponse(status="ok")
 
     @application.middleware("http")
     async def private_api_responses(request, call_next):

@@ -36,6 +36,7 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         application.state.collection_repository = repository
         application.state.dashboard_queries = DashboardQueries(database)
         collection_runner = runner if runner is not None else CollectionRunner(scheduler_settings, repository=repository)
+        application.state.dashboard_queries.runtime_failure_states = collection_runner.volatile_failure_states
         scheduler = CollectorScheduler(collection_runner, scheduler_settings)
         application.state.collection_runner = collection_runner
         application.state.collector_scheduler = scheduler
@@ -52,6 +53,8 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=False,
         allow_methods=["GET"],
+        allow_headers=["Authorization", "If-None-Match"],
+        expose_headers=["ETag", "X-Poll-Interval"],
     )
 
     @application.get("/")

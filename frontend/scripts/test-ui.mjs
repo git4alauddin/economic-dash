@@ -33,6 +33,7 @@ try {
   const adapter = await server.ssrLoadModule("/src/data/dashboard-adapter.ts");
   const state = await server.ssrLoadModule("/src/data/dashboard-state.ts");
   const client = await server.ssrLoadModule("/src/data/dashboard-client.ts");
+  const poller = await server.ssrLoadModule("/src/data/dashboard-poller.ts");
   const { apiBaseUrl } = await server.ssrLoadModule("/src/config.ts");
   const { dashboardFixture, responseFixture } = await server.ssrLoadModule("/src/preview/dashboard-fixtures.ts");
   const render = (type, props) => renderToStaticMarkup(createElement(type, props));
@@ -334,6 +335,101 @@ try {
     await assert.rejects(client.loadDashboard(null, controller.signal, "test", async () => { controller.abort(); return new Response(JSON.stringify(dashboardFixture())); }), { name: "AbortError" });
     const raw = dashboardFixture(); raw.meta.generated_at = "2030-01-01T00:00:00Z";
     assert.equal(adapter.adaptDashboard(raw).panels.gdp_growth.summaries[0].state, "fresh");
+  });
+  await test("conditional reader retains a validated snapshot on 304 without rewriting its dates", async () => {
+    let calls = 0;
+    const reader = client.createDashboardReader(async (_url, options) => {
+      if (calls++ === 0) { assert.equal(options.headers["If-None-Match"], undefined); return new Response(JSON.stringify(dashboardFixture()), { headers: { ETag: 'W/"first"' } }); }
+      assert.equal(options.headers["If-None-Match"], 'W/"first"');
+      return new Response(null, { status: 304, headers: { ETag: 'W/"first"' } });
+    });
+    const first = await reader.read(new AbortController().signal, "token");
+    const second = await reader.read(new AbortController().signal, "token");
+    assert.equal(second.unchanged, true);
+    assert.equal(second.view.snapshot, first.view.snapshot);
+    assert.equal(second.view.snapshot.generatedAt, first.view.snapshot.generatedAt);
+  });
+  await test("conditional reader forces full recovery after failure and clears data across auth identities", async () => {
+    let calls = 0;
+    const reader = client.createDashboardReader(async (_url, options) => {
+      calls++;
+      if (calls === 1 || calls === 3) {
+        assert.equal(options.headers["If-None-Match"], undefined);
+        return new Response(JSON.stringify(dashboardFixture()), { headers: { ETag: '"accepted"' } });
+      }
+      if (calls === 2) return new Response(null, { status: 503 });
+      if (calls === 4) return new Response(null, { status: 401 });
+      assert.equal(options.headers["If-None-Match"], undefined);
+      return new Response(null, { status: 503 });
+    });
+    const signal = new AbortController().signal;
+    await reader.read(signal, "first-user");
+    const failed = await reader.read(signal, "first-user");
+    assert.equal(failed.view.snapshot.panels.gdp_growth.summaries[0].state, "stale");
+    assert.equal((await reader.read(signal, "first-user")).view.snapshot.panels.gdp_growth.summaries[0].state, "fresh");
+    const unauthorized = await reader.read(signal, "first-user");
+    assert.equal(unauthorized.unauthorized, true);
+    assert.equal(unauthorized.view.snapshot, null);
+    assert.equal((await reader.read(signal, "second-user")).view.snapshot, null);
+  });
+  await test("304 without a matching in-memory validator is rejected", async () => {
+    const reader = client.createDashboardReader(async () => new Response(null, { status: 304, headers: { ETag: '"unknown"' } }));
+    const result = await reader.read(new AbortController().signal, "token");
+    assert.equal(result.unchanged, false);
+    assert.equal(result.view.phase, "error");
+    assert.equal(result.view.snapshot, null);
+  });
+  await test("polling coalesces overlap and schedules the next check after sixty seconds", async () => {
+    let calls = 0, release;
+    const jobs = new Map(), views = [];
+    let identifier = 0;
+    const timers = { schedule(callback, delay) { assert.equal(delay, 60_000); jobs.set(++identifier, callback); return identifier; }, cancel(id) { jobs.delete(id); } };
+    const control = poller.startDashboardPolling("token", (view) => views.push(view), { timers, transport: async () => {
+      calls++;
+      if (calls === 1) return new Promise((resolve) => { release = resolve; });
+      return new Response(null, { status: 304, headers: { ETag: '"one"' } });
+    } });
+    const pending = control.refresh();
+    assert.equal(control.refresh(), pending);
+    assert.equal(calls, 1);
+    release(new Response(JSON.stringify(dashboardFixture()), { headers: { ETag: '"one"' } }));
+    await pending;
+    assert.equal(jobs.size, 1);
+    const [id, tick] = jobs.entries().next().value; jobs.delete(id); tick();
+    await control.refresh();
+    assert.equal(calls, 2);
+    assert.equal(views.length, 2);
+    assert.equal(views[1].snapshot, views[0].snapshot);
+    control.stop();
+    assert.equal(jobs.size, 0);
+    await control.refresh();
+    assert.equal(calls, 2);
+  });
+  await test("polling stops and clears its validator on authorization failure", async () => {
+    let calls = 0;
+    const views = [];
+    const control = poller.startDashboardPolling("expired", (view) => views.push(view), {
+      timers: { schedule() { assert.fail("Unauthorized sessions must not schedule polling"); }, cancel() {} },
+      transport: async () => { calls++; return new Response(null, { status: 401 }); },
+    });
+    await control.refresh();
+    await control.refresh();
+    assert.equal(calls, 1);
+    assert.equal(views[0].snapshot, null);
+    assert.equal(views[0].phase, "error");
+  });
+  await test("stopping polling aborts a pending response without later UI updates", async () => {
+    let release;
+    const views = [];
+    const control = poller.startDashboardPolling("token", (view) => views.push(view), {
+      timers: { schedule() { assert.fail("Stopped pollers cannot schedule"); }, cancel() {} },
+      transport: async () => new Promise((resolve) => { release = resolve; }),
+    });
+    const pending = control.refresh();
+    control.stop();
+    release(new Response(JSON.stringify(dashboardFixture())));
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.deepEqual(views, []);
   });
   await test("dense histories retain every observation and table row with one chart Tab stop", () => {
     const labels=Array.from({length:500},(_,index)=>String(1500+index));

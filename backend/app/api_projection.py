@@ -1,6 +1,7 @@
 """SQL read results -> public v1 models; explicit display rounding only."""
 
 from datetime import datetime
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, localcontext
 
 from app.api_models import (
@@ -15,6 +16,29 @@ NAMES = {"gdp_growth_india": "India", "gdp_growth_world": "World", "debt_to_gdp_
          "imports": "Imports", "exports": "Exports", "trade_balance": "Trade balance", "gst_total": "GST Collections",
          "gst_monthly_average": "Monthly Average", "cpi_yoy": "Inflation Rate", "rbi_target": "RBI Target",
          "expenditure_capital": "Capital Expenditure", "expenditure_revenue": "Revenue Expenditure", "expenditure_total": "Total Expenditure"}
+
+
+@dataclass(frozen=True)
+class FreshnessContext:
+    states: tuple[SourceState, ...]
+    volatile_sources: frozenset[str]
+
+
+def freshness_context(queries, states):
+    if isinstance(states, FreshnessContext):
+        return states
+    effective = {s.source_id: s for s in states}
+    volatile = set()
+    for candidate in queries.runtime_failure_states():
+        stored = effective.get(candidate.source_id)
+        # Never mask a newer durable recovery or mix in uncommitted observation values.
+        if candidate.failure_reason and candidate.last_checked_at and (
+            stored is None or stored.last_checked_at is None or
+            candidate.last_checked_at > stored.last_checked_at
+        ):
+            effective[candidate.source_id] = candidate
+            volatile.add(candidate.source_id)
+    return FreshnessContext(tuple(effective.values()), frozenset(volatile))
 
 
 def period(value):
@@ -33,25 +57,40 @@ def comparison(value):
 
 def observation(queries, sid, point, states, now, *, selected=None, reason=None):
     definition = queries.catalog["requirements"][sid]
-    state = next((s for s in states if s.source_id == definition["source_id"]), SourceState(source_id=definition["source_id"]))
+    context = freshness_context(queries, states)
+    state = next((s for s in context.states if s.source_id == definition["source_id"]), SourceState(source_id=definition["source_id"]))
     blocked = definition.get("reason_code") if definition["status"] == "blocked" else None
     validity = freshness(sid, point, state, now, blocked_reason=blocked, empty=state.outcome == "empty")
     status, code = validity.status, validity.reason_code
     if point is None or point.value is None:
-        code = blocked or reason or code
+        if blocked:
+            status, code = "unavailable", blocked
+        elif state.failure_reason or state.outcome == "failed":
+            status, code = "error", state.failure_reason or "collection_failed"
+        elif state.outcome == "empty" and selected is None:
+            status, code = "empty", "source_dataset_empty"
+        else:
+            code = reason or code
     elif reason:
         status, code = "stale", reason
+    elif state.outcome == "failed":
+        status, code = "stale", state.failure_reason or "collection_failed"
     fields = dict(value=format(point.value, "f") if point is not None and point.value is not None else None,
         unit=definition["unit"], definition_id=definition["definition_id"],
         observation_period=period(point.observation_period if point else selected), as_of=point.as_of if point else None,
         as_of_precision=point.as_of_precision if point else None, as_of_kind=point.as_of_kind if point else None,
         sources=point.sources if point else (), status=status, reason_code=code, retention_allowed=validity.retention_allowed)
+    fields.update({key: getattr(state, key) for key in ("last_attempt_at", "last_checked_at", "last_success_at", "last_changed_at", "last_failure_at")})
+    fields.update(publication_deadline=validity.publication_deadline, check_deadline=validity.check_deadline,
+                  freshness_policy_version=validity.policy_version,
+                  failure_state_persisted=(definition["source_id"] not in context.volatile_sources) if state.last_failure_at is not None else None)
     if point:
         fields.update({key: getattr(point, key) for key in ("published_at", "retrieved_at", "dataset_updated_at", "revision_kind", "vintage_id", "parser_version", "normalization_id", "transform_id", "inputs")})
     return ResponseObservation(**fields)
 
 
 def series(queries: DashboardQueries, value: SeriesRead, states, now: datetime) -> ResponseSeries:
+    states = freshness_context(queries, states)
     sid = value.history.series_id
     retained = value.latest_valid is not None and (value.history.latest is None or value.history.latest.value is None)
     latest = observation(queries, sid, value.latest_valid, states, now, selected=value.selected_period,
@@ -59,7 +98,7 @@ def series(queries: DashboardQueries, value: SeriesRead, states, now: datetime) 
     points = tuple(observation(queries, sid, slot.observation, states, now, selected=slot.period, reason=slot.reason_code)
                    for slot in value.history.window)
     displayable = [point for point in points if point.value is not None]
-    status = "stale" if any(p.status == "stale" for p in displayable) else "fresh" if displayable else "unavailable"
+    status = "stale" if any(p.status == "stale" for p in displayable) else "fresh" if displayable else latest.status
     # A bounded window is explicit; neither omitted archive nor revisions are lost.
     return ResponseSeries(name=NAMES[sid], latest=latest, comparison=comparison(value.comparison),
         comparison_reason_code=value.comparison.reason_code,
@@ -87,11 +126,12 @@ def chart(value: IndicatorRead, entries: dict[str, ResponseSeries]):
         domain=(format(lower, "f"), format(upper, "f")), ticks=ticks, unit=entries[plotted[0].history.series_id].latest.unit)
 
 
-def panel(queries: DashboardQueries, value: IndicatorRead, now: datetime) -> ResponsePanel:
-    entries = {s.history.series_id: series(queries, s, value.source_states, now) for s in value.series}
+def panel(queries: DashboardQueries, value: IndicatorRead, now: datetime, *, context=None) -> ResponsePanel:
+    context = freshness_context(queries, value.source_states) if context is None else context
+    entries = {s.history.series_id: series(queries, s, context, now) for s in value.series}
     summaries = []
     for card in value.summaries:
-        point = observation(queries, card.requirement_id, card.observation, value.source_states, now, reason=card.reason_code) if card.definition_id is not None and card.unit is not None else None
+        point = observation(queries, card.requirement_id, card.observation, context, now, reason=card.reason_code) if card.definition_id is not None and card.unit is not None else None
         summaries.append(ResponseSummary(slot=card.slot, requirement_id=card.requirement_id, definition_id=card.definition_id,
             unit=card.unit, observation=point, comparison=comparison(card.comparison), comparison_reason_code=card.comparison.reason_code, reason_code=card.reason_code))
     latest = [entry.latest for entry in entries.values() if entry.latest.value is not None]
@@ -110,11 +150,12 @@ def ticker(queries):
 
 
 def meta(version, now, partial=True):
-    return ResponseMeta(generated_at=now, version=version or "empty", partial=partial)
+    return ResponseMeta(generated_at=now, version=version or "empty", data_version=version or "empty", partial=partial)
 
 
 def dashboard(queries, value: DashboardRead, now):
-    panels = {p.indicator_id: panel(queries, p, now) for p in value.panels}
+    context = freshness_context(queries, value.source_states)
+    panels = {p.indicator_id: panel(queries, p, now, context=context) for p in value.panels}
     return Envelope[DashboardData](data=DashboardData(panels=panels, ticker=ticker(queries)),
                                    meta=meta(value.checkpoint_run_id, now))
 
