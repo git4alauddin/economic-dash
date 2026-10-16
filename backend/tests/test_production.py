@@ -64,6 +64,30 @@ class ProductionTests(unittest.TestCase):
     def test_reviewed_blueprint_and_secret_prompts_pass(self):
         self.assertEqual(blueprint_contract()["services"],2)
 
+    def test_startup_diagnostics_identify_settings_without_echoing_input_or_tracebacks(self):
+        cases = (
+            ({"AUTH_JWT_SIGNING_KEY":"private-canary"}, "AUTH_JWT_SIGNING_KEY"),
+            ({"CORS_ALLOWED_ORIGINS":"private-canary"}, "CORS_ALLOWED_ORIGINS"),
+            ({"CORS_ALLOWED_ORIGINS":'["https://private-canary.onrender.com/"]'}, "CORS_ALLOWED_ORIGINS"),
+            ({"DATABASE_DIRECTORY":"/tmp/private-canary"}, "DatabaseSettings"),
+            ({"PORT":"private-canary"}, "PORT"),
+        )
+        for changes,expected in cases:
+            errors=io.StringIO()
+            with self.subTest(expected=expected),patch.dict(os.environ,{**self.environment(),**changes},clear=True), \
+                    patch("sys.argv",["production","--check"]),redirect_stderr(errors):
+                self.assertEqual(main(),1)
+            self.assertIn(expected,errors.getvalue())
+            self.assertNotIn("private-canary",errors.getvalue())
+            self.assertNotIn("Traceback",errors.getvalue())
+
+    def test_runtime_pin_diagnostic_is_specific_and_keeps_validation_enabled(self):
+        errors=io.StringIO()
+        with patch.dict(os.environ,self.environment(),clear=True),patch("sys.argv",["production","--check"]), \
+                patch("app.production.sys.version_info",(3,13,8)),redirect_stderr(errors):
+            self.assertEqual(main(),1)
+        self.assertIn("Python runtime does not match the repository pin",errors.getvalue())
+
     def test_blueprint_rejects_public_db_multiworker_and_baked_secret_regressions(self):
         spec=json.loads((ROOT / "render.yaml").read_text())
         for mutate in (

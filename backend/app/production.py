@@ -15,6 +15,7 @@ import sys
 from urllib.parse import urlsplit
 
 from pydantic import ValidationError
+from pydantic_settings.exceptions import SettingsError
 
 from app.auth.settings import AuthSettings
 from app.config import BACKEND_DIRECTORY, CollectorSettings, DatabaseSettings, SchedulerSettings, Settings
@@ -22,9 +23,27 @@ from app.config import BACKEND_DIRECTORY, CollectorSettings, DatabaseSettings, S
 ROOT = BACKEND_DIRECTORY.parent
 
 
+class ProductionConfigurationError(ValueError):
+    """Only application-authored messages and schema field names are public."""
+
+
 def require(condition, message):
     if not condition:
-        raise ValueError(message)
+        raise ProductionConfigurationError(message)
+
+
+def checked_settings(model, **options):
+    try:
+        return model(_env_file=None, **options)
+    except ValidationError as error:
+        fields = sorted({item["loc"][0] for item in error.errors(include_input=False, include_context=False, include_url=False)
+                         if item["loc"] and item["loc"][0] in model.model_fields})
+        prefix = model.model_config.get("env_prefix", "")
+        names = ", ".join((prefix + field).upper() for field in fields)
+        raise ProductionConfigurationError(f"{model.__name__}: invalid {names or 'settings combination'}. Check production environment values.") from None
+    except SettingsError:
+        # SettingsError text can contain raw environment input; never print it.
+        raise ProductionConfigurationError(f"{model.__name__}: environment parsing failed. Check JSON list formats for CORS_ALLOWED_ORIGINS/TRUSTED_PROXY_IPS.") from None
 
 
 def public_origin(value):
@@ -37,23 +56,23 @@ def public_origin(value):
         ip_address(host)
     except ValueError:
         return value
-    raise ValueError("Use the assigned HTTPS service hostname.")
+    raise ProductionConfigurationError("Use the assigned HTTPS service hostname.")
 
 
 def production_settings():
     # Ignore developer dotenv files. All production values must be injected.
-    settings = Settings(_env_file=None)
+    settings = checked_settings(Settings)
     require(settings.app_env == "production", "APP_ENV must be production.")
     require(not settings.trusted_proxy_ips, "Proxy peer verification is pending; keep TRUSTED_PROXY_IPS empty.")
     public_origin(settings.cors_allowed_origins[0])
-    auth = AuthSettings(_env_file=None, app_env="production")
-    database = DatabaseSettings(_env_file=None, app_env="production")
-    scheduler = SchedulerSettings(_env_file=None, state_directory=os.environ.get(
+    auth = checked_settings(AuthSettings, app_env="production")
+    database = checked_settings(DatabaseSettings, app_env="production")
+    scheduler = checked_settings(SchedulerSettings, state_directory=os.environ.get(
         "COLLECTOR_SCHEDULER_STATE_DIRECTORY", "/var/data/economic-dash"))
     require(database.directory == Path("/var/data/economic-dash").resolve()
             and scheduler.state_directory == database.directory, "Database and scheduler must share the reviewed private directory.")
     require(scheduler.enabled, "Production collector scheduling must be enabled.")
-    CollectorSettings(_env_file=None)  # Validate optional bounded acquisition overrides.
+    checked_settings(CollectorSettings)  # Validate optional bounded acquisition overrides.
     port = os.environ.get("PORT", "")
     require(bool(re.fullmatch(r"[0-9]{1,5}", port)) and 1 <= int(port) <= 65535, "Render must supply a valid PORT.")
     pin = (BACKEND_DIRECTORY / ".python-version").read_text().strip()
@@ -122,7 +141,10 @@ def main():
         app = create_app(settings, auth_settings=auth, database_settings=database, scheduler_settings=scheduler)
         uvicorn.run(app, host="0.0.0.0", port=port, workers=1, reload=False, access_log=False, proxy_headers=False)
         return 0
-    except (ValidationError, ValueError, KeyError, TypeError, OSError):
+    except ProductionConfigurationError as error:
+        print(f"Production configuration invalid: {error}", file=sys.stderr)
+        return 1
+    except (ValidationError, SettingsError, ValueError, KeyError, TypeError, OSError):
         print("Production configuration invalid; check blueprint, runtime pins, HTTPS origin, secret format, PORT and private paths.", file=sys.stderr)
         return 1
 
