@@ -24,7 +24,8 @@
     "verify:handoff": "node scripts/verify-handoff.mjs",
     "verify:requirements": "node scripts/verify-requirements.mjs",
     "verify:sources": "node scripts/verify-requirements.mjs --online",
-    "test:ui": "node --test scripts/test-ui.mjs"
+    "test:ui": "node --test scripts/test-ui.mjs",
+    "test:auth": "node --test scripts/test-auth.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

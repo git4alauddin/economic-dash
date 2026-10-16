@@ -8,9 +8,9 @@ const browserTimers: Timers = {
   cancel: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
 };
 
-// M5 starts this after sign-in and calls stop on logout/unmount. No token is invented.
+// The session starts this after sign-in and stops it on logout/expiry/unmount.
 export function startDashboardPolling(token: string, onView: (view: DashboardView) => void,
-  { transport, timers = browserTimers }: { transport?: DashboardTransport; timers?: Timers } = {}) {
+  { transport, timers = browserTimers, onUnauthorized }: { transport?: DashboardTransport; timers?: Timers; onUnauthorized?: () => void } = {}) {
   const reader = createDashboardReader(transport), controller = new AbortController();
   let stopped = false, pending: Promise<void> | null = null, timer: unknown = null;
   function stop() {
@@ -26,7 +26,7 @@ export function startDashboardPolling(token: string, onView: (view: DashboardVie
       try {
         const result = await reader.read(controller.signal, token);
         if (!stopped) {
-          if (result.unauthorized) stop();
+          if (result.unauthorized) { stop(); onUnauthorized?.(); }
           onView(result.view);
         }
       } finally {

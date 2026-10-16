@@ -10,6 +10,65 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; }
+.sign-in-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: radial-gradient(ellipse at 20% 10%, #10364a88, transparent 55%), var(--color-page);
+}
+.sign-in-card {
+  width: min(100%, 440px);
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+}
+.sign-in-brand { color: var(--color-cyan); font-size: 14px; font-weight: 700; margin-bottom: 20px; }
+.sign-in-card h1 { font-size: clamp(24px, 4vw, 30px); line-height: 1.2; }
+.sign-in-intro, .session-note { color: var(--color-muted); font-size: 14px; line-height: 1.6; }
+.sign-in-intro { margin-top: 12px; }
+.sign-in-card form { display: grid; gap: 10px; margin-top: 28px; }
+.sign-in-card label { font-size: 14px; font-weight: 700; }
+.sign-in-card input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid #536778;
+  border-radius: 6px;
+  background: #0b1625;
+  color: var(--color-text);
+}
+.sign-in-submit, .session-toolbar button {
+  min-height: 44px;
+  border: 1px solid var(--color-cyan);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+}
+.sign-in-submit { background: var(--color-cyan); color: #03101c; padding: 10px 16px; margin-top: 8px; }
+.sign-in-submit:hover:not(:disabled) { background: #74e3ff; }
+.sign-in-submit:disabled, .session-toolbar button:disabled { opacity: 0.65; cursor: wait; }
+.sign-in-message { padding: 12px; border: 1px solid #526f82; border-radius: 6px; line-height: 1.5; font-size: 14px; }
+.session-note { margin-top: 20px; }
+.session-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px var(--page-inset);
+  border-bottom: 1px solid var(--color-border);
+  background: #071220;
+  font-size: 14px;
+}
+.session-toolbar > span { overflow-wrap: anywhere; }
+.session-toolbar > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-toolbar button { padding: 8px 12px; background: #0b283b; color: var(--color-text); }
+.session-toolbar button:hover:not(:disabled) { background: #16465e; }
+.dashboard-feedback { padding: 10px var(--page-inset); color: var(--color-muted); font-size: 14px; line-height: 1.5; background: #071220; }
 button, input, select { font: inherit; }
 h1, h2, p { margin: 0; }
 

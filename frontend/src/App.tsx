@@ -1,29 +1,22 @@
-import { useEffect, useState } from "react";
-import { checkApiConnection } from "./api";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import DashboardScreen from "./components/DashboardScreen";
+import SignInScreen from "./components/SignInScreen";
 
-export default function App() {
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    checkApiConnection(controller.signal)
-      .then(() => {
-        if (!controller.signal.aborted) setStatus("ready");
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setStatus("error");
-      });
-
-    return () => controller.abort();
-  }, []);
-
-  const message = {
-    loading: "Loading dashboard…",
-    ready: "Dashboard data is not available yet.",
-    error: "Unable to reach the dashboard service.",
-  }[status];
-
-  return <DashboardScreen view={{ phase: status === "ready" ? "ready" : status, snapshot: null, message }} />;
+function SessionScreen() {
+  const { session, snapshot } = useAuth();
+  if (snapshot.phase !== "signed-in") return <SignInScreen busy={snapshot.phase === "signing-in"}
+    message={snapshot.message} onSignIn={session.signIn} />;
+  return <>
+    <nav className="session-toolbar" aria-label="Dashboard session">
+      <span>Signed in as <strong>{snapshot.user?.username}</strong></span>
+      <div>
+        <button type="button" disabled={snapshot.refreshing} onClick={() => { void session.refresh(); }}>{snapshot.refreshing ? "Updating…" : "Refresh data"}</button>
+        <button type="button" onClick={session.signOut}>Sign out</button>
+      </div>
+    </nav>
+    <p className="dashboard-feedback">{snapshot.dashboard.message}</p>
+    <DashboardScreen view={snapshot.dashboard} />
+  </>;
 }
+
+export default function App() { return <AuthProvider><SessionScreen /></AuthProvider>; }
