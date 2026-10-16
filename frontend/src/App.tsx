@@ -6,7 +6,7 @@ function SessionScreen() {
   const { session, snapshot } = useAuth();
   if (snapshot.phase !== "signed-in") return <SignInScreen busy={snapshot.phase === "signing-in"}
     message={snapshot.message} onSignIn={session.signIn} />;
-  return <>
+  return <div className="authenticated-page">
     <nav className="session-toolbar" aria-label="Dashboard session">
       <span>Signed in as <strong>{snapshot.user?.username}</strong></span>
       <div>
@@ -16,7 +16,7 @@ function SessionScreen() {
     </nav>
     <p className="dashboard-feedback">{snapshot.dashboard.message}</p>
     <DashboardScreen view={snapshot.dashboard} readIndicator={session.readIndicator} refreshSequence={snapshot.refreshSequence} />
-  </>;
+  </div>;
 }
 
 export default function App() { return <AuthProvider><SessionScreen /></AuthProvider>; }

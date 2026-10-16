@@ -1,7 +1,7 @@
 import { toChartNumber } from "./format";
 import type { DecimalValue } from "./types";
 
-export const plotBox = { width: 640, height: 320, left: 56, right: 620, top: 24, bottom: 272 };
+export const plotBox = { width: 640, height: 300, left: 56, right: 620, top: 24, bottom: 252 };
 export interface PlotScale { left: number; bandWidth: number; x: (index: number) => number; y: (value: number | null) => number | null; }
 
 export function createPlotScale(count: number, domain: readonly [number, number], left = plotBox.left, banded = false): PlotScale | null {

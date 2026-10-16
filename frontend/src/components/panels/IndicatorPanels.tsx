@@ -28,7 +28,7 @@ function PanelContent({ recipe, data, state = "unavailable", explorer }: PanelPr
   const status = data?.state ?? state;
   const legendSeries = chart?.series.filter((series) => series.kind !== "total") ?? [];
   const legend = recipe.kind === "expenditure" ? [...legendSeries].reverse() : legendSeries;
-  const panel = recipe.kind === "gst" && data?.summaries[0]?.unit === "inr_crore" ? { ...dashboardPanels[recipe.index], accentLabel: "(₹ crore)" } : dashboardPanels[recipe.index];
+  const panel = recipe.kind === "gst" ? { ...dashboardPanels[recipe.index], accentLabel: "(₹ crore)" } : dashboardPanels[recipe.index];
   return <PanelShell panel={panel}>
     <div className={`indicator-content content-${recipe.kind}`} data-specialized-panel={recipe.kind}>
       <div className="panel-summaries">
@@ -37,7 +37,7 @@ function PanelContent({ recipe, data, state = "unavailable", explorer }: PanelPr
           return <SummaryValue key={index} {...summary} value={available ? summary.value : null} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement={recipe.index < 2 ? "inline" : "corner"}>
             {available && summary.comparison && <ComparisonChange {...summary.comparison} />}
             {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "loading" ? "Loading…" : state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
-            {summary.detail && <span>{summary.detail}</span>}
+            {summary.detail && <span className="summary-explanation">{summary.detail}</span>}
           </SummaryValue>;
         })}
       </div>

@@ -60,7 +60,7 @@ def audit_public_site(directory, markers, console):
     return count
 
 
-async def verify(*, all_sources=False):
+async def verify(*, all_sources=False, visual=False, inspect_visual=False):
     node = shutil.which("node")
     require(node is not None, "Node and frontend dependencies are required.")
     with TemporaryDirectory(prefix="economic-dash-session-") as temporary:
@@ -154,7 +154,8 @@ async def verify(*, all_sources=False):
             watchdog = Timer(120, process.kill)
             watchdog.start()
             process.stdin.write(json.dumps({"api_url": api_url, "frontend_port": frontend_port,
-                                           "username": username, "password": password, "world_trace": trace}) + "\n")
+                                           "username": username, "password": password, "world_trace": trace,
+                                           "visual": visual or inspect_visual, "inspect_visual": inspect_visual}) + "\n")
             process.stdin.flush()
             result = None
             for line in process.stdout:
@@ -210,8 +211,10 @@ async def verify(*, all_sources=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all-sources", action="store_true")
+    parser.add_argument("--visual", action="store_true", help="Audit real-data viewport/usability in memory; no evidence files.")
+    parser.add_argument("--inspect-visual", action="store_true", help="Also return one in-memory JPEG for interactive inspection.")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(verify(all_sources=args.all_sources)), sort_keys=True))
+    print(json.dumps(asyncio.run(verify(all_sources=args.all_sources, visual=args.visual, inspect_visual=args.inspect_visual)), sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import type { PanelProps } from "./IndicatorPanels";
 export default function PanelMetadata({ data, explorer }: { data?: PanelPresentation; explorer?: PanelProps["explorer"] }) {
   const selection = explorer?.snapshot;
   return <div className="panel-provenance">
-    <SourceAsOf sources={data?.sources ?? []} asOf={data?.asOf ?? null} />
+    <SourceAsOf sources={data?.sources ?? []} asOf={data?.asOf ?? null} compact />
     {data?.seriesDetails && <details className="panel-data-details" onToggle={(event) => { if (event.currentTarget.open) void explorer?.controller.open(); }} onKeyDown={(event) => {
       if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
     }}>
@@ -25,7 +25,7 @@ export default function PanelMetadata({ data, explorer }: { data?: PanelPresenta
                 if (event.target.value) periods[choice.id] = event.target.value; else delete periods[choice.id];
                 void explorer.controller.select(selection.window, periods);
               }}>
-              <option value="">{choice.blocked ? "Unavailable — source or definition blocked" : "Latest available"}</option>
+              <option value="">{choice.blocked ? "Unavailable" : "Latest available"}</option>
               {choice.periods.map((period) => <option key={period.id} value={period.id}>{period.label} ({period.basis})</option>)}
             </select></label>)}
             <button type="button" onClick={() => { void explorer.controller.select(5, {}); }}>Latest view</button>

@@ -71,7 +71,7 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
   const summaries = binding.summaries.map((id) => {
     const item = id ? entries[id] : undefined, definition = binding.series.find((entry) => entry.id === id);
     return { label: item?.name ?? definition?.label ?? (panelId === "debt_to_gdp" ? "Ind vs US" : "Comparison unavailable"), value: item?.latest.value ?? null,
-      detail: !id && panelId === "debt_to_gdp" ? "Comparison definition unresolved." : undefined,
+      detail: !id && panelId === "debt_to_gdp" ? "Definition unresolved." : undefined,
       unit: definition?.unit ?? binding.series[0].unit, precision: item?.precision ?? 2, state: item?.latest.status ?? "unavailable" as UiState,
       comparison: item?.comparison && item.latest.value !== null ? { value: item.comparison.value, unit: item.comparison.unit, precision: item.comparison.precision, referenceLabel: item.comparison.reference_label } : undefined };
   });

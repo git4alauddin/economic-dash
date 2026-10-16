@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { build, preview, createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { privateDataBoundary } from "./private-data-boundary.mjs";
+import { auditDashboard } from "./audit-dashboard.mjs";
 
 const input = createInterface({ input: process.stdin }), lines = input[Symbol.asyncIterator]();
 const config = JSON.parse((await lines.next()).value);
@@ -25,6 +26,9 @@ const consoleMessages = [], protectedStatuses = [];
 let captureUpdates = false;
 let apiFault = null;
 let tokenFault = null;
+let visualAudit = null, visualImage = null;
+let holdDashboard = false, heldDashboardRequest = null;
+const loadingFrames = [];
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await probe()) return; await delay(50); }
@@ -64,6 +68,7 @@ try {
     const item = JSON.parse(data);
     if (item.method === "Fetch.requestPaused") {
       const requestId = item.params.requestId;
+      if (holdDashboard && item.params.request.method === "GET") { heldDashboardRequest = requestId; return; }
       const reply = apiFault === "503" && item.params.request.method === "GET"
         ? command("Fetch.fulfillRequest", { requestId, responseCode: 503, responseHeaders: [
           { name: "Content-Type", value: "application/json" },
@@ -246,7 +251,7 @@ try {
       await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
       assert.equal(await evaluate(`document.querySelector('${selector} .panel-data-details').open`), false);
     }
-    assert.ok(await evaluate(`document.querySelector('[data-panel-id="debt_to_gdp"] .summary-value[aria-label="Ind vs US"]').textContent.includes('Comparison definition unresolved.')`));
+    assert.ok(await evaluate(`document.querySelector('[data-panel-id="debt_to_gdp"] .summary-value[aria-label="Ind vs US"]').textContent.includes('Definition unresolved.')`));
     for (const quote of dashboardBodies[0].data.ticker.items) {
       await evaluate(`document.querySelector('[data-instrument-id="${quote.instrument_id}"]').click()`);
       assert.ok(await evaluate(`!!document.querySelector('.ticker-details')`));
@@ -275,13 +280,56 @@ try {
   await visible(`!!document.querySelector('[role="alert"]') && !document.querySelector('#username').disabled`, "generic credential failure");
   assert.equal(await evaluate(`document.querySelector('#password').value`), "");
   assert.equal(requests.filter((r) => r.url.endsWith("/auth/login")).length, 1);
-  await signIn(); await dashboard();
+  if (config.visual) {
+    holdDashboard = true;
+    await command("Fetch.enable", { patterns: [{ urlPattern: `${config.api_url}/api/v1/dashboard`, requestStage: "Request" }] });
+  }
+  await signIn();
+  if (config.visual) {
+    await visible(`!!document.querySelector('[data-api-state="loading"]')`, "initial dashboard loading layout");
+    await waitFor(() => !!heldDashboardRequest, "held initial read");
+    for (const viewport of [{width:1214,height:2159},{width:390,height:844},{width:320,height:740}]) {
+      await command("Emulation.setDeviceMetricsOverride", { ...viewport, deviceScaleFactor: 1, mobile: false });
+      await evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+      const frame = await evaluate(`({rootY:document.querySelector('[data-dashboard-root]').getBoundingClientRect().y,panels:Array.from(document.querySelectorAll('[data-panel-id]')).map(node=>{const b=node.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}})})`);
+      loadingFrames.push({ ...viewport, ...frame });
+    }
+    await command("Emulation.setDeviceMetricsOverride", { width:1214,height:2159,deviceScaleFactor:1,mobile:false });
+    holdDashboard = false;
+    await command("Fetch.fulfillRequest", { requestId: heldDashboardRequest, responseCode: 503, responseHeaders: [
+      { name: "Content-Type", value: "application/json" },
+      { name: "Access-Control-Allow-Origin", value: `http://127.0.0.1:${config.frontend_port}` },
+      { name: "Cache-Control", value: "no-store" },
+    ], body: Buffer.from('{"error":{"code":"service_unavailable"}}').toString("base64") });
+    await visible(`!!document.querySelector('[data-api-state="error"]')`, "initial API failure layout");
+    await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    const errorFrame = await evaluate(`({rootY:document.querySelector('[data-dashboard-root]').getBoundingClientRect().y,panels:Array.from(document.querySelectorAll('[data-panel-id]')).map(node=>{const b=node.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}})})`);
+    loadingFrames.push({ width:1214, height:2159, phase:"error", ...errorFrame });
+    await command("Fetch.disable");
+    await click("Refresh data");
+  }
+  await dashboard();
   await waitFor(() => dashboardBodies.length > 0, "actual dashboard response capture");
   const world = dashboardBodies[0].data.panels.gdp_growth.series.gdp_growth_world.latest;
   for (const field of ["value", "unit", "definition_id", "vintage_id", "sources"]) assert.deepEqual(world[field], config.world_trace[field], "Publisher/SQL/API World trace mismatch");
   assert.deepEqual(world.observation_period, config.world_trace.period);
   assert.equal(world.as_of, config.world_trace.year);
   assert.equal(world.as_of_precision, "year");
+  if (config.visual) {
+    visualAudit = await auditDashboard(command, evaluate, loadingFrames);
+    assert.ok(visualAudit.views.every((view) => !view.issues.length), "Visual/usability audit failed: " + JSON.stringify(visualAudit.views.filter((view) => view.issues.length).map(({width,issues,loadingDelta,errorDelta,keyboard})=>({width,issues,loadingDelta,errorDelta,keyboard}))));
+    if (config.inspect_visual) visualImage = (await command("Page.captureScreenshot", { format: "jpeg", quality: 25,
+      clip: { x: 0, y: 0, width: 1214, height: 2159, scale: 0.5 }, captureBeyondViewport: true })).data;
+  }
+  const checkVisualState = async (name) => {
+    if (!visualAudit) return;
+    await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    const boxes = await evaluate(`Array.from(document.querySelectorAll('[data-panel-id]')).map(node=>{const b=node.getBoundingClientRect(),root=document.querySelector('[data-dashboard-root]').getBoundingClientRect();return {x:b.x,y:b.y-root.y,width:b.width,height:b.height}})`);
+    const baseline = visualAudit.views[0].panels;
+    const delta = Math.max(...boxes.flatMap((box,index)=>["x","y","width","height"].map((key)=>Math.abs(box[key]-baseline[index][key]))));
+    assert.ok(delta<=1, `${name} moved panel layout by ${delta}px`);
+    visualAudit.states = { ...visualAudit.states, [name]: delta };
+  };
   await assertWorldTrace(world.status);
   await verifyPanelInteractions(dashboardBodies[0].data.panels);
   captureUpdates = true;
@@ -301,6 +349,7 @@ try {
     if (action === "source_invalid") assert.equal(point.reason_code, "invalid_source_payload");
     scheduledVersions.add(body.meta.data_version);
     await assertWorldTrace(point.status);
+    await checkVisualState(action);
   }
   assert.equal(scheduledVersions.size, 3, "Scheduled failure/recovery did not advance durable checkpoint versions");
   captureUpdates = false;
@@ -326,6 +375,7 @@ try {
   await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.includes('refresh failed')`, "selected API 503 retention");
   assert.ok(statuses.includes(503), "Injected API failure did not reach the browser as HTTP 503");
   await assertWorldTrace("stale");
+  await checkVisualState("api_503");
   assert.equal(await evaluate(`document.querySelector('[data-period-series="gdp_growth_world"]').value`), config.world_trace.period.id);
   apiFault = null; await command("Fetch.disable");
   await click("Refresh data"); await dashboard();
@@ -338,6 +388,7 @@ try {
   await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.includes('refresh failed')`, "selected offline retention");
   assert.ok(await evaluate(`!!document.querySelector('[data-dashboard-root]')`));
   await assertWorldTrace("stale");
+  await checkVisualState("offline");
   assert.equal(requests.filter((r) => r.url.endsWith("/auth/login")).length, loginCount, "Password was replayed after a data error");
   await command("Network.setBlockedURLs", { urls: [] });
   await click("Refresh data"); await dashboard();
@@ -437,13 +488,13 @@ try {
   const audit = await control("audit_public", { directory: site, console: consoleMessages });
   assert.ok(audit.assets_checked > 0);
   await command("Browser.close");
-  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 13, panels: 6, web_storage_disabled: true,
+  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: config.visual ? 14 : 13, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
     network_boundary_verified: true, world_source_sql_api_ui_verified: true,
     world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true,
     scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true,
     browser_token_cases_verified: true, server_token_rejection_clears_ui: true, cors_origins_verified: true,
-    public_assets_console_audited: true }) + "\n");
+    public_assets_console_audited: true, ...(visualAudit ? { visualAudit } : {}), ...(visualImage ? { visualImage } : {}) }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

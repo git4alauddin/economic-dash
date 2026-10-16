@@ -85,6 +85,24 @@ try {
     assert.match(render(PeriodLabel, { label: "FY25", basis: "fiscal" }), /FY25.*Fiscal period/);
     assert.ok(!render(PeriodLabel, { label: "FY25", basis: "fiscal" }).includes("2025-"));
   });
+  await test("compact attribution keeps full accessible names, URLs and honest mixed dates", () => {
+    const sources = [
+      { source_id: "world_bank_gdp", name: "World Bank World Development Indicators (data)", url: "https://api.worldbank.org/data", is_nse: false },
+      { source_id: "world_bank_gdp.metadata", name: "World Bank indicator metadata", url: "https://api.worldbank.org/metadata", is_nse: false },
+    ];
+    const compact = render(SourceAsOf, { sources, asOf: null, compact: true });
+    assert.match(compact, /Dates by series/); assert.doesNotMatch(compact, /<time/);
+    for (const source of sources) {
+      assert.ok(compact.includes(`aria-label="${source.name}"`)); assert.ok(compact.includes(`href="${source.url}"`));
+    }
+    assert.equal(compact.match(/Non-NSE/g).length, 1);
+    assert.ok(compact.includes(">World Bank</a>") && compact.includes(">WB metadata</a>"));
+    const full = render(SourceAsOf, { sources, asOf: { value: "2025", precision: "year", kind: "period_end" } });
+    assert.equal(full.match(/Non-NSE/g).length, 2); assert.ok(full.includes(`>${sources[0].name}</a>`));
+    assert.ok(full.includes("Period ending") && full.includes("2025"));
+    const unknown = render(SourceAsOf, { sources: [{ ...sources[0], source_id: "another_source", name: "Another publisher" }], asOf: null, compact: true });
+    assert.ok(unknown.includes(">Another publisher</a>"));
+  });
   await test("summary and state components expose unavailable/retained states", () => {
     assert.match(render(SummaryValue, { label: "Missing", value: null, unit: "percent", precision: 2 }), /Value unavailable/);
     assert.match(render(SummaryValue, { label: "Zero", value: "0", unit: "percent", precision: 2 }), /0.00%/);
@@ -102,7 +120,7 @@ try {
     const paths = geometry.buildLinePaths(["2.5", null, "0", "7.25"], scale);
     assert.equal(paths.length, 2);
     assert.ok(!paths[0].includes(" L"));
-    assert.ok(paths[1].includes("272.000 L"));
+    assert.ok(paths[1].includes("252.000 L"));
     assert.equal(geometry.createPlotScale(3, [2, 2]), null);
     assert.equal(scale.y(Infinity), null);
   });

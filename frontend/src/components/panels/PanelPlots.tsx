@@ -100,6 +100,6 @@ export default function PanelPlot({ kind, chart, state }: { kind: PanelKind; cha
   return <div className={`indicator-chart indicator-chart-${kind}`}>
     <ChartFrame title={`${kind} history`} description="Values and periods are supplied by the panel model. Missing observations remain gaps. Series details provides visible history tables when available."
       labels={chart.labels} domain={chart.domain} ticks={chart.ticks} unit={chart.unit} precision={chart.precision} axisPrecision={0}
-      banded={banded} viewBoxHeight={304} state={state} points={points} references={chart.references} renderPlot={backdrop} renderMark={mark} />
+      banded={banded} viewBoxHeight={284} state={state} points={points} references={chart.references} renderPlot={backdrop} renderMark={mark} />
   </div>;
 }
