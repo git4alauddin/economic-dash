@@ -5,44 +5,22 @@ dashboard assignment.
 
 ## Current status
 
-M1.2 provides the repository skeleton. M1.3 adds pinned dependencies, environment
-configuration, development CORS and a placeholder that checks its FastAPI connection.
-Local startup, browser rendering, backend configuration tests and frontend builds
-have been verified.
+The application now supports private account sign-in, JWT-protected FastAPI
+reads, scheduled server-side collection, private SQLite persistence and a React
+dashboard that polls every 60 seconds. Available real series render with their
+source/date metadata; eight source/definition gates remain blocked, including
+market permissions. Unavailable values remain explicit.
 
-M1.4–M1.6 document the production feasibility baseline, shared contracts and first
-indicator handoff. M1.6 rechecked local HTTP/CORS behavior; source locking and the
-authentic data pipeline remain downstream work.
+Local auth, API, database and browser checks pass. M6 owns the remaining full
+integration, controls, accessibility and design-fidelity acceptance. M7 owns
+separate HTTPS deployments, hosted evaluator access and production verification;
+these are pending. M5 is locally implemented; hosted security acceptance is pending.
 
-M1.7 records the architecture handoff and change policy below. The shared baseline
-is frozen for implementation; overall M1 acceptance remains conditional on the
-open design/source gates. Hosting decisions have feasibility evidence, with live
-verification assigned to M7.
-
-M2.1 adds a provisional PNG-derived UI audit below. M2.2 implements the styled
-header, unavailable-data ticker and six-panel shell, with a repeatable browser
-layout check. Exact Figma properties and interaction states remain unverified.
-
-M2.3 adds shared display/metadata/state components, SVG chart foundations and a
-development-only synthetic preview. The dashboard now uses shared unavailable
-states and source/date footers.
-
-M2.4 implements the six specialized panels, their summaries, original SVG icon
-substitutes and populated development previews. Production panels show missing
-values until validated data is connected. Exact design/source definitions remain
-open as described below.
-
-M2.5 adds the typed market ticker, quote details, keyboard scrolling and explicit
-availability/cadence states. Its development preview exercises synthetic quotes;
-production still has no market feed. The interaction choices are documented below.
-
-M2.6 adds response validation, the dashboard adapter, per-observation retention
-rules and a synthetic API-state preview. Additional wire fields are a documented
-M4 handoff proposal. Production still uses the bootstrap connection check until
-the authenticated dashboard endpoint is implemented and integrated.
-
-Authentic observations, database storage, authentication,
-scheduled collection, full integration QA and deployments remain outstanding.
+Current operating instructions: [local setup](#local-setup),
+[evaluator access](#evaluator-access-and-security),
+[configuration](#environment-configuration) and [API](#current-api).
+Earlier M1/M2 sections retain planning/checkpoint context; these current sections
+supersede their scaffold-status statements. M7 will consolidate the final README.
 
 ## Planned scope
 
@@ -66,12 +44,13 @@ outstanding. Charting uses the custom SVG foundation documented below.
 economic-dash/
   frontend/
     src/
-      App.tsx          Dashboard shell and bootstrap connection state
-      api.ts           Bootstrap API connection check
+      App.tsx          Sign-in gate and authenticated live dashboard
+      auth/            In-memory session provider and bounded sign-in client
+      api.ts           Legacy bootstrap connection helper
       config.ts        Public API URL configuration
       dashboard-panels.ts  Stable panel IDs/titles; no observations
       components/      DashboardLayout, DashboardHeader, MarketTicker, PanelShell
-      data/            Draft response validation, dashboard adapter/client/state
+      data/            Validated response adapter, authenticated reader and polling
         ui/            Values, comparisons, periods, states and source/as-of footer
         charts/        SVG chart frame, point tooltips and legend
         panels/        Six specialized panels, plots and original SVG icons
@@ -96,7 +75,10 @@ economic-dash/
     app/
       __init__.py
       config.py        Validated environment settings
-      main.py          FastAPI application and bootstrap route
+      main.py          FastAPI lifecycle, protected routes and collector scheduler
+      auth/            Private provisioning, Argon2id, JWT and login throttling
+      database.py      Private SQLite bootstrap and bounded connections
+      migrations/      Ordered, checksummed schema migrations
     tests/
       test_configuration.py
     .env.example
@@ -119,8 +101,8 @@ Planning documents and design exports currently live in the sibling `../doc/`
 folder, outside this Git repository.
 
 This README will document reproducible setup, API contracts, data sources,
-decisions and limitations as they are implemented. Private implementation logs
-record progress separately; evaluator-facing instructions belong in this repository.
+decisions and limitations as they are implemented. Private quick notes
+stay outside Git; evaluator-facing instructions belong in this repository.
 
 ## Ownership and naming
 
@@ -218,8 +200,10 @@ Planned build/runtime settings for M7:
   routes are introduced. Build with the actual HTTPS API URL.
 - Backend: set `PYTHON_VERSION=3.13.7`; build with
   `python -m pip install -r requirements.txt`; start with
-  `python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1`.
-  Set `APP_ENV=production` and the exact HTTPS frontend origin. Do not use reload.
+  `python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 --no-access-log --no-proxy-headers`.
+  Set `APP_ENV=production`, the exact HTTPS frontend origin and the backend signing
+  key. M7 must verify the actual trusted proxy peers before enabling proxy headers;
+  this CLI command does not consume run.py's `TRUSTED_PROXY_IPS`. Do not use reload.
 - Vercel manages Node minor/patch versions, so its build must satisfy our package
   engine range and pass a clean build; an exact cloud patch match is not assumed.
   [Node support](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions).
@@ -314,7 +298,7 @@ coordinated consumers, or a new API version.
 | `GET /` | Public | Existing non-sensitive bootstrap message; no economic data |
 | `GET /health` | Public | M4: local service/database readiness; 200 when ready, 503 otherwise; no source fetch or secrets |
 | `POST /api/v1/auth/login` | Public, throttled | M5: JSON `username` and `password`; generic 401 on invalid credentials |
-| `GET /api/v1/auth/me` | Bearer token | M5: current user's opaque `id` and normalized `username` |
+| `GET /api/v1/auth/me` | Bearer token | M5: current user's opaque `user_id` and normalized `username` |
 | `GET /api/v1/indicators` | Bearer token | M4: indicator/series definitions, units, available periods and supported controls |
 | `GET /api/v1/dashboard` | Bearer token | M4: ticker plus all six panels; primary boot/poll request |
 | `GET /api/v1/indicators/{indicator_id}` | Bearer token | M4: selected panel's series, summaries and comparisons |
@@ -487,16 +471,17 @@ traces. M4 implements common handlers; M5 integrates auth failures with them.
   migration mechanics and password hashes instead of plaintext.
 - Login accepts JSON `username` and `password`. Success returns `access_token`,
   `token_type: "bearer"`, integer `expires_in` seconds, UTC `expires_at`, and a
-  minimal `user` (`id`, `username`). Responses/logs never echo the password.
+  minimal `user` (`user_id`, `username`). Responses/logs never echo the password.
 - Choose HS256 with a server-held secret generated from at least 32 cryptographic
   random bytes. M5 validates an explicit algorithm allowlist, signature, required
   `sub`, `iat`, `exp`, `iss`, `aud`, and the active identity. Issuer is
   `economic-dash-api`; audience is `economic-dash-web`. Lifetime defaults to
-  30 minutes via `ACCESS_TOKEN_EXPIRE_MINUTES`, with at most 30 seconds of server
+  15 minutes via `AUTH_ACCESS_TOKEN_MINUTES` (5–30), with 5 seconds of server
   clock-skew allowance. Reject unsigned, wrong-algorithm and malformed tokens.
-- The signing secret is supplied only through backend configuration (`JWT_SECRET`);
-  issuer/audience are `JWT_ISSUER`/`JWT_AUDIENCE`. Names are reserved here; M5 adds
-  their validated settings and safe examples. Never publish actual key material.
+- The signing secret is supplied only through backend configuration
+  (`AUTH_JWT_SIGNING_KEY`); issuer/audience are
+  `AUTH_JWT_ISSUER`/`AUTH_JWT_AUDIENCE`. Clock tolerance is configurable through
+  `AUTH_CLOCK_SKEW_SECONDS` (0–30). Never publish actual key material.
 - React keeps the access token and protected responses in memory and sends
   `Authorization: Bearer <token>` over HTTPS. No tokens in URLs, local/session
   storage or cookies. There is no refresh-token flow; page reload requires sign-in.
@@ -504,22 +489,23 @@ traces. M4 implements common handlers; M5 integrates auth failures with them.
   clears token/protected data and returns to sign-in. Do not replay passwords or
   silently retry unauthorized requests. Logout performs the same local cleanup.
 - Stateless logout does not revoke a previously issued token server-side; it
-  remains usable until expiry unless its account is disabled or the key rotates.
+  remains usable until expiry unless its password/account status changes, its
+  account is deleted, or the key rotates. Re-enabling cannot revive older tokens.
   Immediate per-token revocation is outside this initial policy.
-- M5 expands CORS to GET/POST/OPTIONS and `Authorization`/`Content-Type`, exposes
+- CORS permits GET/POST preflights and `Authorization`/`Content-Type`, exposes
   `Retry-After` if used by the client, and keeps `allow_credentials=false` with
   fetch credentials omitted. Production permits only the actual HTTPS frontend
   origin. No-token preflights are handled without bypassing route authentication.
 
 JWT claim/validation basis: [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)
 and [JWT best current practices](https://www.rfc-editor.org/rfc/rfc8725).
-These are application policy choices to implement/test in M5, not claims that
-authentication already exists in the current scaffold.
+These policies are implemented and locally checked in M5. Hosted verification
+remains pending M7.
 
 ADR-07 chooses short-lived memory bearer tokens over persistent cookie/refresh
 sessions to simplify separate-site authentication. Reload requires re-login and
-logout does not provide immediate token revocation. M5/M6 verify guards, expiry,
-cleanup and cross-origin behavior.
+logout does not provide immediate token revocation. M6/M7 retain the final
+integration and hosted acceptance checks.
 
 ### Refresh, cache and consumer handoff
 
@@ -1203,15 +1189,62 @@ cd backend
 uv venv --python 3.13.7 .venv
 uv pip sync --python .venv/Scripts/python.exe requirements-dev.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe run.py
 ```
 
 If PyCharm already supplies an isolated environment, substitute its configured
 Python executable for `.venv/Scripts/python.exe`. The environment can live outside
 the repository; application configuration still loads from `backend/.env`.
 
+Set `AUTH_JWT_SIGNING_KEY` in the ignored `backend/.env`. Generate its value once
+in a private terminal with
+`.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))"`,
+then copy it into that setting. Keep an existing key to preserve valid sessions;
+changing it invalidates issued tokens. Production uses a host-managed secret.
+Create the evaluator account using the next section, then start the API with
+`.\.venv\Scripts\python.exe run.py`.
+
 The API listens at `http://127.0.0.1:8000`. Development mode enables reload;
 test and production modes do not. Runtime-only installs use `requirements.txt`.
+
+### Evaluator access and security
+
+From `backend/`, using its configured Python environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.auth.provision --username evaluator
+```
+
+Enter and confirm a private 15–128 character password at the hidden prompt.
+Only a salted Argon2id hash is persisted. A fresh checkout has no default account
+or password. Repeating provisioning with the same password is unchanged;
+intentional changes require `--reset-password`. `--disable`/`--enable` change
+account status. These flags follow `--username evaluator` on the same command.
+Disabling, re-enabling and actual password changes invalidate older access tokens.
+
+Start both services, open `http://127.0.0.1:5173` and sign in with the provisioned
+username/password. A successful login loads protected real data and starts the
+60-second poller; **Refresh data** checks again and **Sign out** clears the session.
+The frontend port is fixed; stop a duplicate server rather than changing ports
+without an explicit development CORS entry.
+
+Tokens last 15 minutes by default and stay in React memory. Reload, expiry or
+protected-request 401/403 clears the session and requires sign-in. Tokens never
+enter URLs, cookies or browser storage, and passwords are not automatically
+replayed. Sign-out clears the browser session; a copied token remains valid until
+expiry or account/key invalidation. There is no registration or refresh endpoint.
+
+For panel handoff, provision a strong evaluator password on the **deployed backend's
+persistent database**, verify it through the deployed frontend, and send the HTTPS
+frontend URL, username, password and session/reload instructions through the agreed
+private channel. Confirm account availability for the actual panel window; accounts
+have an active flag rather than a scheduled expiry. Share credentials separately
+from Git, README, screenshots and public submission links. Local accounts and
+temporary test accounts do not provision the hosted service; the easy local demo
+passphrase is development-only.
+
+M6 still owns full control/state/source-traceability, design and accessibility
+acceptance. M7 must verify real hosted sign-in, exact-origin CORS, HTTPS/trusted
+proxy peers, private persistent storage and restart behavior before panel delivery.
 
 ### Frontend
 
@@ -1222,9 +1255,9 @@ npm ci
 npm run dev -- --strictPort
 ```
 
-Open `http://127.0.0.1:5173`. The styled shell displays six unavailable-data panels
-and no-data quote placeholders. The API bootstrap check resolves independently;
-failed API requests produce an error message while preserving the layout.
+Open `http://127.0.0.1:5173`. Sign in to load six panels and the ticker from the
+authenticated API. Blocked feeds remain unavailable. Permitted observations may
+remain visible as stale during a data-network failure; auth failures clear them.
 
 `npm run build` type-checks and creates `dist/`; `npm run preview` serves that build
 locally. For preview against the API, explicitly add its exact origin (normally
@@ -1239,6 +1272,15 @@ locally. For preview against the API, explicitly add its exact origin (normally
 | `API_HOST` | `backend/.env` | Development launcher listen address; default is `127.0.0.1` |
 | `API_PORT` | `backend/.env` | Development launcher listen port; default is `8000`; the hosted start command uses Render's `PORT` |
 | `CORS_ALLOWED_ORIGINS` | `backend/.env` | JSON array of exact frontend origins, without paths or trailing slashes |
+| `AUTH_JWT_SIGNING_KEY` | Backend secret only | Required 32 random bytes as 64 hex characters; no default; production refuses startup without it |
+| `AUTH_JWT_ISSUER`, `AUTH_JWT_AUDIENCE` | Backend only | Defaults `economic-dash-api`, `economic-dash-web`; exact token scope |
+| `AUTH_ACCESS_TOKEN_MINUTES`, `AUTH_CLOCK_SKEW_SECONDS` | Backend only | Defaults 15 minutes and 5 seconds; bounds 5–30 minutes and 0–30 seconds |
+| `AUTH_LOGIN_CLIENT_ATTEMPTS`, `AUTH_LOGIN_GLOBAL_ATTEMPTS` | Backend only | Defaults 10/client and 60 total per login window |
+| `AUTH_LOGIN_WINDOW_SECONDS`, `AUTH_LOGIN_MAX_CLIENTS` | Backend only | Defaults 60 seconds and 1024 client buckets; process-local limiter resets on restart |
+| `TRUSTED_PROXY_IPS` | Backend only | JSON list of trusted peer IPs/CIDRs for run.py; empty disables proxy headers; wildcard/all-address trust refused |
+| `DATABASE_DIRECTORY` | Backend only | Local default `.runtime/database`; production `/var/data/economic-dash` on a mounted persistent disk |
+| `DATABASE_BUSY_TIMEOUT`, `DATABASE_MAX_CONNECTIONS`, `DATABASE_READ_TIMEOUT` | Backend only | Defaults 5 seconds writer wait, 8 connections and 2 seconds cumulative SQL read budget |
+| `COLLECTOR_*`, `COLLECTOR_SCHEDULER_*` | Backend only | Acquisition/scheduling bounds in [backend/.env.example](backend/.env.example); production lock directory must be persistent |
 
 Backend process variables override `backend/.env`. Restart the API after changing
 its environment. For the frontend, restart Vite after changing `.env`; deployed
@@ -1246,26 +1288,84 @@ builds must be rebuilt with their API URL. `VITE_` variables are public browser
 configuration and must never contain secrets.
 
 The sample CORS allowlist permits only `http://127.0.0.1:5173` and
-`http://localhost:5173`, with GET requests and no credentialed cookies. CORS controls
+`http://localhost:5173`, with GET/POST, JSON/bearer preflights and no credentialed cookies. CORS controls
 browser access; it is not authentication. Production configuration requires
 `APP_ENV=production` and exactly one explicitly configured HTTPS frontend origin.
-Wildcards and development defaults are rejected in production. Provider-specific
-deployment settings and authentication are addressed in later modules.
+Wildcards and local development origins are rejected in production. JWT guards
+also protect direct clients regardless of their Origin header. run.py disables
+raw access logs and ignores proxy headers until explicit trusted peers are set;
+equivalent flags must be applied to alternative production launchers.
+
+SQLite files/sidecars stay backend-private and outside frontend assets; no public
+DB port, file mount, HTTP SQL proxy or collector-write route exists. Linux uses
+service-user ownership, directory 0700 and files 0600; Windows inherits host ACLs.
+Use one API instance/worker for the selected SQLite, scheduler and limiter design.
 
 ## Current API
 
-These routes describe the current scaffold. The M1.5 route/access table above is
-the target contract; its protected endpoints and production docs policy are not
-implemented yet.
+| Route | Access and response |
+| --- | --- |
+| `GET /` | Public bootstrap message |
+| `GET /health` | Public local DB/schema readiness: 200 `ok` or 503 `unavailable`; independent of source freshness |
+| `POST /api/v1/auth/login` | Public, throttled; JSON credentials exchanged for an expiring JWT |
+| `GET /api/v1/auth/me` | Bearer JWT; current `user_id` and normalized `username` |
+| `GET /api/v1/dashboard` | Bearer JWT; six panels and ticker from a consistent SQL snapshot |
+| `GET /api/v1/indicators` | Bearer JWT; indicator/series definitions and available periods |
+| `GET /api/v1/indicators/{indicator_id}` | Bearer JWT; one panel, summaries, history and comparisons |
+| `GET /api/v1/indicators/{indicator_id}/history` | Bearer JWT; required `series_id`, optional `end_period_id` and `window` |
+| `GET /api/v1/ticker` | Bearer JWT; market feeds remain unavailable until permission/definition gates clear |
+| `/docs`, `/redoc`, `/openapi.json` | Public locally; routes disabled in production |
 
-- `GET /`: public bootstrap response, `{"message":"Economic Indicators API"}`.
-- `GET /docs`: generated interactive API documentation.
-- `GET /openapi.json`: generated OpenAPI schema.
+Login requires `Content-Type: application/json` and only `username`/`password`
+string fields. Body size is capped at 4096 bytes with a 5-second receive deadline.
+Success returns `access_token`, `token_type` (`bearer`), `expires_in` (seconds),
+`expires_at` (UTC) and `user` (`user_id`, `username`). Send the token only in
+`Authorization: Bearer <access_token>` for protected requests, over HTTPS when hosted.
 
-The bootstrap response is not a health contract or authentic indicator data.
-M4 owns the final health and dashboard routes; M5 owns authentication.
+Dashboard reads return `{data, meta}`; `window` defaults to 5 and accepts 1–24
+periods. A panel can select repeated `period=series_id:period_id`. Metadata includes
+representation/data versions, generation time, partial-state indication and the
+60-second poll interval. Conditional `If-None-Match` reads may return bodyless 304;
+JWT and account checks run first. Private responses use `Cache-Control: no-store`.
+
+Errors return `{error: {code, message, details}}` without submitted credentials.
+Wrong credentials or invalid/missing/expired access tokens give 401. Login
+throttling gives 429 with `Retry-After`; all admitted attempts, including success
+and malformed requests, consume the per-client/global budgets. Storage or auth
+unavailability gives a controlled 503; a missing development key disables sign-in.
+An "unable to reach" browser message warrants checking API reachability, the
+frontend port, API base URL and exact-origin CORS before changing credentials.
 
 ## Verification and dependency updates
+
+Current checks, from `backend/` with the configured Python executable:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe -m app.verify_integration --all-sources
+.\.venv\Scripts\python.exe -m app.verify_session --all-sources
+```
+
+The real-source verifiers require outbound publisher access; the browser check
+also requires installed Chrome/Edge (optional `CHROME_PATH`) and frontend Node
+dependencies. They use temporary databases/accounts/keys and remove temporary
+artifacts. Without `--all-sources` they verify the World Bank slice. Their
+redacted summaries print to the terminal, with no saved report or credentials.
+
+From `frontend/`:
+
+```powershell
+npm run test:ui
+npm run test:auth
+npm run test:boundaries
+npm run build
+```
+
+Local checks cover route guards, bad/expired/revoked JWTs, throttling, malformed
+input, CORS, private-file boundaries, login/logout/reload, offline recovery and
+browser network isolation. They do not establish M6's full design/accessibility
+acceptance or M7's hosted acceptance. Earlier checkpoint checks below are retained
+for context.
 
 ### Local scaffold smoke check — M1.6
 
@@ -1358,10 +1458,11 @@ From `backend/`, using the isolated environment:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The seven tests cover example configuration, dotenv/process precedence, invalid
-ports and CORS origins, production restrictions and allowed/rejected preflights.
-Local HTTP and browser startup were also checked. Changing only
-`VITE_API_BASE_URL` was verified to change the generated build's API configuration.
+The backend suite includes configuration/precedence, collectors, normalized data,
+migrations, SQL/repository behavior, API contracts, JWT/account guards, rate
+controls and private service boundaries. Linux-only permission checks are skipped
+on Windows and must also pass on the target host. Changing `VITE_API_BASE_URL`
+requires a frontend rebuild for deployment.
 
 `package-lock.json` is the frontend dependency lock. Backend `requirements*.in`
 files declare direct dependencies; the corresponding `.txt` files pin their
