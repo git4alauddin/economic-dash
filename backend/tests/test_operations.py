@@ -5,7 +5,7 @@ from contextlib import ExitStack, contextmanager
 import json
 from math import ceil
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from statistics import median
 from tempfile import TemporaryDirectory
 from time import perf_counter

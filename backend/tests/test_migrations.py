@@ -4,7 +4,7 @@ from contextlib import closing
 from datetime import timezone
 import json
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch

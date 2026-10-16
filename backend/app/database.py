@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import stat
 from threading import BoundedSemaphore
 from time import monotonic
@@ -109,7 +109,7 @@ class Database:
         self._check_files()
         connection = sqlite3.connect(
             self.settings.path.as_uri() + ("?mode=ro" if read_only else "?mode=rw"), uri=True,
-            timeout=self.settings.busy_timeout, autocommit=True,
+            timeout=self.settings.busy_timeout, isolation_level=None,
         )
         try:
             connection.row_factory = sqlite3.Row

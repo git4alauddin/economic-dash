@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 import re
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from typing import Iterator
 
 SCHEMA_VERSION = 2

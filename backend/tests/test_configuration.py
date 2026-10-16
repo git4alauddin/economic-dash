@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.config import BACKEND_DIRECTORY, DatabaseSettings, SchedulerSettings, Settings
+from app.auth.settings import AuthSettings
 from app.main import create_app
 
 
@@ -61,8 +62,9 @@ class ConfigurationTests(unittest.TestCase):
         settings = Settings(
             _env_file=None, app_env="production", cors_allowed_origins=[origin],
         )
+        auth = AuthSettings(_env_file=None, app_env="production", jwt_signing_key="ab" * 32)
         # CORS-only test; production mount/fail-closed behavior is tested separately.
-        with patch("app.main.Database.bootstrap"), patch("app.main.SQLiteCollectionRepository.load", return_value=None), TestClient(create_app(settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
+        with patch("app.main.Database.bootstrap"), patch("app.main.SQLiteCollectionRepository.load", return_value=None), TestClient(create_app(settings, auth_settings=auth, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))) as client:
             allowed = client.get("/", headers={"Origin": origin})
             denied = client.get("/", headers={"Origin": "http://localhost:5173"})
         self.assertEqual(allowed.headers["access-control-allow-origin"], origin)

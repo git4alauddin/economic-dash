@@ -3,7 +3,7 @@
 from contextlib import ExitStack
 import os
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import stat
 from tempfile import TemporaryDirectory
 import unittest

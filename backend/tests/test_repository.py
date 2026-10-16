@@ -6,7 +6,7 @@ from decimal import Decimal
 import logging
 import os
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import subprocess
 import sys
 from tempfile import TemporaryDirectory

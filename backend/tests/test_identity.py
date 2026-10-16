@@ -6,7 +6,7 @@ from getpass import GetPassWarning
 from io import StringIO
 import json
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from tempfile import TemporaryDirectory
 from threading import Barrier
 import unittest

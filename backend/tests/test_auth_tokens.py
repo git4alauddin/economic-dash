@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from secrets import token_hex
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch

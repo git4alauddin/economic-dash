@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from secrets import token_hex
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import unittest
 from unittest.mock import patch
 

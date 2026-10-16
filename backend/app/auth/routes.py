@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from datetime import datetime
 from typing import Annotated, Literal
 

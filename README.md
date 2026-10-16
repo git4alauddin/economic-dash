@@ -1306,6 +1306,11 @@ SQLite files/sidecars stay backend-private and outside frontend assets; no publi
 DB port, file mount, HTTP SQL proxy or collector-write route exists. Linux uses
 service-user ownership, directory 0700 and files 0600; Windows inherits host ACLs.
 Use one API instance/worker for the selected SQLite, scheduler and limiter design.
+Linux x86-64 installs the pinned `pysqlite3-binary` runtime through requirements;
+`app.sqlite_runtime` supplies the same driver to all database operations and error
+handlers. This preserves JSON schema constraints with `trusted_schema=OFF` when
+the host's system SQLite lacks that support. Other platforms use Python's SQLite.
+Existing migration checksums and database files remain compatible.
 
 ## Current API
 

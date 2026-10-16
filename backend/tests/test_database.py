@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import stat
 import subprocess
 import sys
@@ -64,6 +64,22 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(sqlite3.OperationalError), self.database.connection():
             pass
         self.assertFalse(self.settings.path.exists())
+
+    def test_json_constraints_work_with_untrusted_schema_and_reject_invalid_payloads(self):
+        self.database.bootstrap()
+        with self.database.transaction() as connection:
+            self.assertEqual(connection.execute("PRAGMA trusted_schema").fetchone()[0],0)
+            connection.execute("CREATE TABLE json_probe(payload TEXT CHECK(json_valid(payload) AND json_type(payload)='object')) STRICT")
+            connection.execute("INSERT INTO json_probe VALUES (?)", ('{"retained":true}',))
+        for invalid in ("[]", "not json"):
+            with self.subTest(payload=invalid),self.assertRaises(sqlite3.Error),self.database.transaction() as connection:
+                connection.execute("INSERT INTO json_probe VALUES (?)",(invalid,))
+        with self.database.connection() as connection:
+            self.assertEqual(connection.execute("SELECT count(*) FROM json_probe").fetchone()[0],1)
+            # Python-defined functions are still prohibited in schema expressions.
+            connection.create_function("untrusted_probe",1,lambda value:1,deterministic=True)
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("CREATE TABLE unsafe_probe(value TEXT CHECK(untrusted_probe(value)))")
 
     def test_commit_rollback_foreign_keys_and_unfinished_transaction_cleanup(self):
         self.database.bootstrap()

@@ -1,7 +1,7 @@
 """JWT-protected v1 reads; authorization precedes SQL and conditional responses."""
 
 from datetime import datetime, timezone
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request, Response

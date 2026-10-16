@@ -3,7 +3,7 @@
 import asyncio
 from datetime import timedelta
 import logging
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import unittest
 from unittest.mock import patch
 

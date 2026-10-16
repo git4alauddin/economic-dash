@@ -1,6 +1,9 @@
 annotated-doc==0.0.5      # via fastapi, -c requirements.txt
 annotated-types==0.8.0    # via pydantic, -c requirements.txt
 anyio==4.15.1             # via httpx2, starlette, -c requirements.txt
+argon2-cffi==25.1.0       # via -c requirements.txt, -r requirements.in
+argon2-cffi-bindings==26.1.0  # via argon2-cffi, -c requirements.txt
+cffi==2.1.1               # via argon2-cffi-bindings, -c requirements.txt
 click==8.5.0              # via uvicorn, -c requirements.txt
 fastapi==0.143.2          # via -c requirements.txt, -r requirements.in
 h11==0.16.0               # via httpcore2, uvicorn, -c requirements.txt
@@ -9,9 +12,12 @@ httpx2==2.13.1            # via -c requirements.txt, -r requirements.in
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'  # via httpx2, -c requirements.txt
 idna==3.20                # via anyio, httpx2, -c requirements.txt
 opentelemetry-api==1.45.1  # via fastapi, -c requirements.txt
+pycparser==3.11 ; implementation_name != 'PyPy'  # via cffi, -c requirements.txt
 pydantic==2.14.1          # via fastapi, pydantic-settings, -c requirements.txt
 pydantic-core==2.50.1     # via pydantic, -c requirements.txt
 pydantic-settings==2.16.0  # via -c requirements.txt, -r requirements.in
+pyjwt==2.15.1             # via -c requirements.txt, -r requirements.in
+pysqlite3-binary==0.5.4.post2 ; platform_machine == 'x86_64' and sys_platform == 'linux'  # via -c requirements.txt, -r requirements.in
 python-dotenv==1.2.4      # via pydantic-settings, -c requirements.txt
 starlette==1.8.0          # via fastapi, -c requirements.txt
 truststore==0.10.5 ; sys_platform != 'emscripten'  # via httpcore2, httpx2, -c requirements.txt

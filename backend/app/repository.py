@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import json
-import sqlite3
+from app.sqlite_runtime import sqlite3
 
 from app.database import Database
 from app.collectors.catalog import CATALOG_PATH

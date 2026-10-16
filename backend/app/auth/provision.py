@@ -7,7 +7,7 @@ Passwords are accepted only from a non-echoing interactive prompt, never argv.
 import argparse
 from getpass import GetPassWarning, getpass
 import json
-import sqlite3
+from app.sqlite_runtime import sqlite3
 import sys
 import warnings
 

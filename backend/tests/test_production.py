@@ -20,7 +20,7 @@ class ProductionTests(unittest.TestCase):
                 "COLLECTOR_SCHEDULER_STATE_DIRECTORY":"/var/data/economic-dash", "COLLECTOR_SCHEDULER_ENABLED":"true"}
 
     def test_injected_environment_validates_without_touching_database_or_echoing_secret(self):
-        with patch.dict(os.environ,self.environment(),clear=True), patch("sqlite3.connect") as connect:
+        with patch.dict(os.environ,self.environment(),clear=True), patch("app.sqlite_runtime.sqlite3.connect") as connect:
             settings,auth,database,scheduler,port=production_settings()
         connect.assert_not_called()
         self.assertEqual(settings.app_env,"production")

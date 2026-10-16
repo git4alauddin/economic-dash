@@ -1,6 +1,6 @@
 """One JWT/account guard for identity, dashboard reads and conditional polling."""
 
-import sqlite3
+from app.sqlite_runtime import sqlite3
 from typing import Annotated
 
 from fastapi import Depends, Request
