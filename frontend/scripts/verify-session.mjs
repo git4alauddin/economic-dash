@@ -21,8 +21,10 @@ const pending = new Map(), requests = [], network = [], statuses = [], errors = 
 const dashboardRequests = new Set(), dashboardBodies = [], captures = [];
 const indicatorRequests = new Map(), indicatorBodies = [];
 const runtimeErrors = new Map();
+const consoleMessages = [], protectedStatuses = [];
 let captureUpdates = false;
 let apiFault = null;
+let tokenFault = null;
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await probe()) return; await delay(50); }
@@ -68,7 +70,10 @@ try {
           { name: "Access-Control-Allow-Origin", value: `http://127.0.0.1:${config.frontend_port}` },
           { name: "Cache-Control", value: "no-store" },
         ], body: Buffer.from('{"error":{"code":"service_unavailable"}}').toString("base64") })
-        : command("Fetch.continueRequest", { requestId });
+        : command("Fetch.continueRequest", { requestId, ...(tokenFault && item.params.request.method === "GET" ? {
+          headers: [...Object.entries(item.params.request.headers).filter(([name]) => name.toLowerCase() !== "authorization").map(([name, value]) => ({ name, value })),
+            { name: "Authorization", value: `Bearer ${tokenFault}` }],
+        } : {}) });
       void reply.catch(() => { errors.push("Private API failure injection failed"); });
     }
     if (item.method === "Runtime.exceptionThrown") {
@@ -77,6 +82,13 @@ try {
         frames: detail.stackTrace?.callFrames.map(({ functionName, lineNumber }) => ({ functionName, lineNumber })) });
     }
     if (item.method === "Runtime.exceptionRevoked") runtimeErrors.delete(item.params.exceptionId);
+    if (item.method === "Runtime.consoleAPICalled") {
+      const text = item.params.args.map((arg) => arg.value ?? arg.description ?? "").join(" ");
+      if (consoleMessages.length < 1000) consoleMessages.push(text); else errors.push("Console audit budget exceeded");
+    }
+    if (item.method === "Log.entryAdded") {
+      if (consoleMessages.length < 1000) consoleMessages.push(item.params.entry.text); else errors.push("Console audit budget exceeded");
+    }
     if (item.method === "Network.requestWillBeSent") network.push(item.params.request.url);
     if (item.method === "Network.webSocketCreated") network.push(item.params.url);
     if (item.method === "Network.requestWillBeSent" && item.params.type === "Fetch") {
@@ -89,6 +101,9 @@ try {
       // Only the first full response is needed for the source trace. Later
       // responses can disappear during intentional reload/logout/cancellation.
       if (item.params.response.status === 200 && (captureUpdates || captures.length === 0)) dashboardRequests.add(item.params.requestId);
+    }
+    if (item.method === "Network.responseReceived" && item.params.type === "Fetch" && item.params.response.url.startsWith(`${config.api_url}/api/v1/`)) {
+      protectedStatuses.push({ path: new URL(item.params.response.url).pathname, status: item.params.response.status });
     }
     if (item.method === "Network.loadingFinished" && dashboardRequests.delete(item.params.requestId)) {
       captures.push(command("Network.getResponseBody", { requestId: item.params.requestId }).then((result) => {
@@ -123,8 +138,8 @@ try {
     await evaluate(`document.querySelector('#username').value=${JSON.stringify(config.username)};document.querySelector('#password').value=${JSON.stringify(password)};document.querySelector('form').requestSubmit();true`);
   };
   const dashboard = () => visible(`!!document.querySelector('[data-dashboard-root]') && !!Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Refresh data'&&!b.disabled)`, "loaded dashboard");
-  const control = async (action) => {
-    process.stdout.write(JSON.stringify({ control: action }) + "\n");
+  const control = async (action, fields = {}) => {
+    process.stdout.write(JSON.stringify({ control: action, ...fields }) + "\n");
     const reply = JSON.parse((await lines.next()).value);
     assert.equal(reply.ok, true); return reply;
   };
@@ -240,7 +255,7 @@ try {
       assert.equal(await evaluate(`document.activeElement.getAttribute('data-instrument-id')`), quote.instrument_id);
     }
   };
-  await command("Page.enable"); await command("Runtime.enable"); await command("Network.enable");
+  await command("Page.enable"); await command("Runtime.enable"); await command("Network.enable"); await command("Log.enable");
   // Headless pages can have an active SVG element while the page itself is
   // unfocused, suppressing native focus events. Emulate the foreground tab.
   await command("Emulation.setFocusEmulationEnabled", { enabled: true });
@@ -329,8 +344,69 @@ try {
   await visible(`document.querySelector('[data-panel-id="gdp_growth"] .panel-history-controls').getAttribute('aria-busy')==='false'`, "selected offline recovery");
   await assertWorldTrace(world.status);
   await evaluate(`Array.from(document.querySelectorAll('[data-panel-id="gdp_growth"] button')).find(button=>button.textContent==='Latest view').click()`);
+  const tokenCases = (await control("token_cases")).tokens;
+  const protectedPaths = ["/auth/me", "/dashboard", "/indicators", "/ticker",
+    `/indicators/gdp_growth?period=gdp_growth_world:${config.world_trace.period.id}`,
+    "/indicators/gdp_growth/history?series_id=gdp_growth_world"];
+  for (const [kind, token] of Object.entries({ missing: "", malformed: "malformed.fixture.token", ...tokenCases })) {
+    for (const path of protectedPaths) {
+      const result = await evaluate(`(async () => {
+        const token=${JSON.stringify(token)}, headers={'If-None-Match':'*'};
+        if(token) headers.Authorization='Bearer '+token;
+        const response=await fetch(${JSON.stringify(config.api_url + "/api/v1" + path)},{headers,credentials:'omit',cache:'no-store',redirect:'error'});
+        const text=await response.text();let body;try{body=JSON.parse(text)}catch{}
+        return {status:response.status,code:body?.error?.code,etag:response.headers.get('ETag'),echoed:!!token&&text.includes(token)};
+      })()`);
+      assert.equal(result.status, 401, `${kind} token reached ${path}`);
+      assert.equal(result.etag, null); assert.equal(result.echoed, false);
+      assert.equal(result.code, kind === "missing" ? "authentication_required" : "authentication_invalid");
+    }
+  }
+  // Route the UI's normal authenticated requests through the real JWT guard
+  // with negative test tokens; no synthetic 401 response or auth override.
+  for (const kind of ["expired", "tampered"]) {
+    if (kind === "expired") {
+      await evaluate(`document.querySelector('[data-panel-id="gdp_growth"] .panel-data-details').open=true`);
+      await visible(`!!document.querySelector('[data-period-series="gdp_growth_world"]')`, "expiry test period choices");
+      await evaluate(`(() => {const select=document.querySelector('[data-period-series="gdp_growth_world"]');select.value=${JSON.stringify(config.world_trace.period.id)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+      await visible(`document.querySelector('[data-panel-id="gdp_growth"] [role="status"]')?.textContent.startsWith('Selected history.')`, "expiry test selected query");
+    }
+    const path = kind === "expired" ? "/api/v1/indicators/gdp_growth" : "/api/v1/dashboard";
+    const before = protectedStatuses.filter((entry) => entry.path === path && entry.status === 401).length;
+    tokenFault = tokenCases[kind];
+    await command("Fetch.enable", { patterns: [{ urlPattern: `${config.api_url}${path}*`, requestStage: "Request" }] });
+    await click("Refresh data");
+    await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, `${kind} token clears signed-in UI`);
+    assert.ok(protectedStatuses.filter((entry) => entry.path === path && entry.status === 401).length > before);
+    tokenFault = null; await command("Fetch.disable");
+    const loggedOutCount = requests.length;
+    await evaluate(`document.querySelector('#username').focus()`);
+    assert.equal(requests.length, loggedOutCount, "Signed-out focus restarted protected updates");
+    await signIn(); await dashboard();
+  }
   await click("Sign out");
   await visible(`!!document.querySelector('#username')&&!document.querySelector('[data-dashboard-root]')`, "logout clears data");
+  const frontendOrigin = `http://127.0.0.1:${config.frontend_port}`;
+  const rejectedOrigin = `http://localhost:${config.frontend_port}`;
+  for (const origin of [frontendOrigin, rejectedOrigin]) for (const [path, method, headers] of [
+    ["/auth/login", "POST", "content-type"], ["/dashboard", "GET", "authorization,if-none-match"],
+    ["/indicators/gdp_growth/history?series_id=gdp_growth_world", "GET", "authorization"],
+  ]) {
+    const preflight = await fetch(`${config.api_url}/api/v1${path}`, { method: "OPTIONS", headers: {
+      Origin: origin, "Access-Control-Request-Method": method, "Access-Control-Request-Headers": headers,
+    }, redirect: "error" });
+    assert.equal(preflight.status, origin === frontendOrigin ? 200 : 400);
+    assert.equal(preflight.headers.get("Access-Control-Allow-Origin"), origin === frontendOrigin ? origin : null);
+    assert.equal(preflight.headers.get("Access-Control-Allow-Credentials"), null);
+  }
+  await command("Page.navigate", { url: rejectedOrigin + "/" });
+  await visible(`!!document.querySelector('#username')`, "unapproved-origin sign-in page");
+  await signIn();
+  await visible(`document.querySelector('[role="alert"]')?.textContent.includes('Unable to reach')&&!document.querySelector('#username').disabled`, "browser rejected unapproved origin");
+  assert.equal(await evaluate(`!!document.querySelector('[data-dashboard-root]')`), false);
+  assert.equal(await evaluate(`document.querySelector('#password').value`), "");
+  await command("Page.navigate", { url: frontendOrigin + "/" });
+  await visible(`!!document.querySelector('#username')`, "approved-origin sign-in page");
   const beforeSignIn = requests.length;
   await signIn(); await dashboard();
   const fresh = requests.slice(beforeSignIn).find((r) => r.url.endsWith("/dashboard"));
@@ -352,18 +428,22 @@ try {
   assert.equal(errors.length, 0, "Browser response capture failed");
   assert.equal(runtimeErrors.size, 0, "Unhandled browser exceptions: " + JSON.stringify([...runtimeErrors.values()]));
   assert.ok(requests.every((r) => r.url.startsWith(config.api_url + "/api/v1/")), "Browser contacted an unexpected data source");
-  const frontendOrigin = `http://127.0.0.1:${config.frontend_port}`;
   assert.ok(network.length > 0 && network.every((url) => {
     const parsed = new URL(url);
-    if (parsed.origin === frontendOrigin) return parsed.pathname === "/" || parsed.pathname.startsWith("/assets/") || parsed.pathname === "/favicon.ico";
+    if ([frontendOrigin, rejectedOrigin].includes(parsed.origin)) return parsed.pathname === "/" || parsed.pathname.startsWith("/assets/") || parsed.pathname === "/favicon.ico";
     return parsed.origin === config.api_url && parsed.pathname.startsWith("/api/v1/");
   }), "Browser network escaped the static frontend/authenticated API boundary");
+  assert.ok(consoleMessages.every((line) => !/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(line)), "Access token reached browser console output");
+  const audit = await control("audit_public", { directory: site, console: consoleMessages });
+  assert.ok(audit.assets_checked > 0);
   await command("Browser.close");
-  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 10, panels: 6, web_storage_disabled: true,
+  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 13, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
     network_boundary_verified: true, world_source_sql_api_ui_verified: true,
     world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true,
-    scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true }) + "\n");
+    scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true,
+    browser_token_cases_verified: true, server_token_rejection_clears_ui: true, cors_origins_verified: true,
+    public_assets_console_audited: true }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

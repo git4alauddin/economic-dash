@@ -197,4 +197,42 @@ try {
       assert.equal(session.getSnapshot().phase, "signed-out"); assert.equal(time.pending.size, 0); session.dispose();
     }
   });
+  await test("login deadline actively cancels a stalled body, clears busy state and permits a fresh manual sign-in", async () => {
+    const originalTimeout = AbortSignal.timeout;
+    let deadline, started, canceled = false, calls = 0;
+    const reading = new Promise((resolve) => { started = resolve; });
+    AbortSignal.timeout = (milliseconds) => { assert.equal(milliseconds, 15_000); deadline = new AbortController(); return deadline.signal; };
+    try {
+      const time = clock();
+      const stalled = createAuthSession({ now: time.now, timers: time.timers, transport: async (url) => {
+        if (!url.endsWith("/auth/login")) return json(dashboardFixture());
+        if (calls++ === 0) return new Response(new ReadableStream({ pull() { started(); }, cancel() { canceled = true; } }, { highWaterMark: 0 }));
+        return json(grant());
+      } });
+      try {
+        const pending = stalled.signIn("evaluator", password);
+        await reading; deadline.abort(new DOMException("Synthetic deadline", "TimeoutError")); await pending;
+        assert.equal(canceled, true); assert.equal(calls, 1);
+        assert.equal(stalled.getSnapshot().phase, "signed-out"); assert.equal(time.pending.size, 0);
+        assert.equal(stalled.getSnapshot().message.includes(password), false);
+        await stalled.signIn("evaluator", password); await settle();
+        assert.equal(stalled.getSnapshot().phase, "signed-in"); assert.equal(calls, 2);
+      } finally { stalled.dispose(); }
+    } finally { AbortSignal.timeout = originalTimeout; }
+  });
+  await test("caller cancellation and advertised oversized login bodies release their readers without replay", async () => {
+    let started, canceled = false;
+    const reading = new Promise((resolve) => { started = resolve; }), controller = new AbortController();
+    const pending = signInCredentials("evaluator", password, controller.signal, { transport: async () => new Response(new ReadableStream({
+      pull() { started(); }, cancel() { canceled = true; },
+    }, { highWaterMark: 0 })) });
+    await reading; controller.abort(); await assert.rejects(pending, { name: "AbortError" }); assert.equal(canceled, true);
+    for (const length of ["16385", "-1", "unknown"]) {
+      let canceledHeader = false, calls = 0;
+      await assert.rejects(signInCredentials("evaluator", password, new AbortController().signal, { transport: async () => {
+        calls++; return new Response(new ReadableStream({ cancel() { canceledHeader = true; } }), { headers: { "Content-Length": length } });
+      } }), (error) => error.kind === "invalid");
+      assert.equal(canceledHeader, true); assert.equal(calls, 1);
+    }
+  });
 } finally { await server.close(); }

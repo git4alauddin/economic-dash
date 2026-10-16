@@ -13,11 +13,12 @@ from secrets import token_hex, token_urlsafe
 import shutil
 import socket
 import subprocess
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from threading import Thread, Timer
 from time import monotonic, sleep
 
 import uvicorn
+import jwt
 
 from app.auth.settings import AuthSettings
 from app.auth.users import UserStore
@@ -32,6 +33,31 @@ from app.main import create_app
 from app.repository import SQLiteCollectionRepository
 from app.verify_integration import require
 from app.verify_world_trace import world_gdp_trace
+
+
+def audit_public_site(directory, markers, console):
+    """Inspect disposable build/console bytes; never return matching private data."""
+    site = Path(directory).resolve(strict=True)
+    relative = site.relative_to(Path(gettempdir()).resolve())
+    require(len(relative.parts) == 2 and relative.parts[0].startswith("economic-dash-browser-") and relative.parts[1] == "site",
+            "Public audit requires the isolated browser build.")
+    forbidden = tuple(value.encode("utf-8") for value in markers if value)
+    count = 0
+    for path in site.rglob("*"):
+        require(not path.is_symlink(), "Public build contains a linked path.")
+        if not path.is_file():
+            continue
+        require(path.stat().st_size <= 2_000_000, "Public audit asset exceeded its size budget.")
+        content = path.read_bytes()
+        require(not any(marker in content for marker in forbidden), "Private material reached a public build asset.")
+        require(b"SQLite format 3\x00" not in content and b"$argon2id$" not in content, "Private storage material reached a public build asset.")
+        count += 1
+    require(count > 0, "Public build audit found no assets.")
+    require(isinstance(console, list) and len(console) <= 1000 and all(isinstance(line, str) for line in console),
+            "Invalid private console audit input.")
+    for line in console:
+        require(not any(marker in line.encode("utf-8") for marker in forbidden), "Private material reached browser console output.")
+    return count
 
 
 async def verify(*, all_sources=False):
@@ -99,9 +125,9 @@ async def verify(*, all_sources=False):
             finally:
                 source_fault = None
                 receipts.clear()
-        username, password = "browser_check", token_urlsafe(32)
+        username, password = "evaluator", token_urlsafe(32)
         users = UserStore(database)
-        users.provision(username, password)
+        evaluator = users.provision(username, password).identity
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             frontend_port = probe.getsockname()[1]
@@ -109,9 +135,10 @@ async def verify(*, all_sources=False):
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
         api_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        auth_settings = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32))
         app = create_app(Settings(_env_file=None, app_env="test", cors_allowed_origins=[f"http://127.0.0.1:{frontend_port}"]),
             database_settings=settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False),
-            auth_settings=AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32)))
+            auth_settings=auth_settings)
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", log_level="critical", access_log=False,
                                               proxy_headers=False, loop="asyncio"))
         thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
@@ -134,10 +161,28 @@ async def verify(*, all_sources=False):
                 item = json.loads(line)
                 if "control" in item:
                     action = item["control"]
-                    require(action in {"disable", "enable", "source_timeout", "source_invalid", "source_recover"}, "Unknown private test control.")
+                    require(action in {"disable", "enable", "source_timeout", "source_invalid", "source_recover", "token_cases", "audit_public"}, "Unknown private test control.")
                     if action.startswith("source_"):
                         recovered_trace = await scheduled_check(action.removeprefix("source_"))
                         reply = {"ok": True, "trace": recovered_trace}
+                    elif action == "token_cases":
+                        valid = app.state.auth_service.issue(evaluator).token
+                        head, payload, signature = valid.split(".")
+                        key = bytes.fromhex(auth_settings.jwt_signing_key.get_secret_value())
+                        claims = jwt.decode(valid, key, algorithms=["HS256"], audience=auth_settings.jwt_audience, issuer=auth_settings.jwt_issuer)
+                        now = int(datetime.now(timezone.utc).timestamp())
+                        claims.update(iat=now - 1800, nbf=now - 1800, exp=now - 900)
+                        reply = {"ok": True, "tokens": {
+                            "expired": jwt.encode(claims, key, algorithm="HS256", headers={"typ": "at+jwt"}),
+                            "tampered": ".".join((head, payload, ("A" if signature[0] != "A" else "B") + signature[1:])),
+                        }}
+                    elif action == "audit_public":
+                        with database.connection(read_only=True) as connection:
+                            encoded = connection.execute("SELECT password_hash FROM auth_users WHERE user_id=?", (evaluator.user_id,)).fetchone()[0]
+                        local_key = AuthSettings().jwt_signing_key
+                        count = audit_public_site(item["directory"], (password, encoded, auth_settings.jwt_signing_key.get_secret_value(),
+                                                  local_key.get_secret_value() if local_key else ""), item.get("console", []))
+                        reply = {"ok": True, "assets_checked": count}
                     else:
                         users.set_active(username, action == "enable")
                         reply = {"ok": True}

@@ -11,16 +11,24 @@ const object = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
-async function boundedJson(response: Response): Promise<unknown> {
+async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const length = response.headers.get("Content-Length");
+  if (length !== null && (!/^\d{1,10}$/.test(length) || Number(length) > 16_384)) {
+    void response.body?.cancel().catch(() => {}); throw new SignInError("invalid");
+  }
   if (!response.body) throw new SignInError("invalid");
   const reader = response.body.getReader(), parts: Uint8Array[] = [];
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
   let size = 0;
   try {
+    signal.throwIfAborted();
     for (;;) {
       const { done, value } = await reader.read();
+      signal.throwIfAborted();
       if (done) break;
       size += value.byteLength;
-      if (size > 16_384) { await reader.cancel(); throw new SignInError("invalid"); }
+      if (size > 16_384) { cancel(); throw new SignInError("invalid"); }
       parts.push(value);
     }
     const bytes = new Uint8Array(size);
@@ -28,7 +36,7 @@ async function boundedJson(response: Response): Promise<unknown> {
     for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown; }
     catch { throw new SignInError("invalid"); }
-  } finally { reader.releaseLock(); }
+  } finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
 }
 
 export async function signInCredentials(username: string, password: string, signal: AbortSignal,
@@ -44,7 +52,7 @@ export async function signInCredentials(username: string, password: string, sign
     if (response.status === 429) throw new SignInError("rate-limited");
     if (response.status >= 500) throw new SignInError("unavailable");
     if (!response.ok) throw new SignInError("invalid");
-    const data = object(await boundedJson(response)), user = object(data.user);
+    const data = object(await boundedJson(response, requestSignal)), user = object(data.user);
     requestSignal.throwIfAborted();
     const token = data.access_token, expiresAt = typeof data.expires_at === "string" ? Date.parse(data.expires_at) : NaN;
     const receivedAt = now();
