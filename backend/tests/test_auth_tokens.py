@@ -25,7 +25,10 @@ class AuthTokenTests(unittest.TestCase):
     def setUp(self):
         temporary = TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.settings = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32))
+        # Token-claim matrices issue many grants in one test. Throttling itself
+        # is exercised separately with strict budgets in test_hardening.
+        self.settings = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32),
+                                     login_client_attempts=100, login_global_attempts=200)
         self.key = bytes.fromhex(self.settings.jwt_signing_key.get_secret_value())
         self.app = create_app(Settings(_env_file=None, app_env="test"), auth_settings=self.settings,
             database_settings=DatabaseSettings(_env_file=None, app_env="test", directory=Path(temporary.name) / "db"),

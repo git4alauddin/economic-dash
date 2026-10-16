@@ -1,5 +1,6 @@
 """Bounded JSON sign-in and identity, using the shared application guard."""
 
+import asyncio
 import json
 import sqlite3
 from datetime import datetime
@@ -46,10 +47,17 @@ def unique_object(pairs):
 
 
 async def login_input(request: Request) -> LoginInput:
-    if request.query_params:
+    # Use only the server's peer identity. Forwarded headers are interpreted by
+    # Uvicorn only when an operator explicitly trusts the proxy (M7).
+    request.app.state.login_limiter.admit(request.client.host if request.client else "unknown")
+    if request.scope.get("query_string"):
         raise ApiError(422, "invalid_request", "Login accepts JSON credentials only.")
-    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+    if len(request.headers.getlist("content-type")) != 1 or request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
         raise ApiError(415, "unsupported_media_type", "Send an application/json request.")
+    if request.headers.get("content-encoding", "identity").lower() != "identity":
+        raise ApiError(415, "unsupported_media_type", "Compressed login requests are not supported.")
+    if len(request.headers.getlist("content-length")) > 1:
+        raise ApiError(400, "invalid_request", "Request length is invalid.")
     length = request.headers.get("content-length")
     if length is not None:
         if not length.isascii() or not length.isdecimal():
@@ -57,19 +65,23 @@ async def login_input(request: Request) -> LoginInput:
         if len(length) > 10 or int(length) > 4096:
             raise ApiError(413, "request_too_large", "Login request exceeds the size limit.")
     body = bytearray()
-    async for chunk in request.stream():
-        if len(body) + len(chunk) > 4096:
-            raise ApiError(413, "request_too_large", "Login request exceeds the size limit.")
-        body.extend(chunk)
     try:
-        data = json.loads(body, object_pairs_hook=unique_object)
+        async with asyncio.timeout(5):
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 4096:
+                    raise ApiError(413, "request_too_large", "Login request exceeds the size limit.")
+                body.extend(chunk)
+    except TimeoutError:
+        raise ApiError(408, "request_timeout", "Login request took too long.") from None
+    try:
+        data = json.loads(body.decode("utf-8"), object_pairs_hook=unique_object)
         return LoginInput.model_validate(data)
     except (ValueError, ValidationError, UnicodeError, RecursionError):
         raise ApiError(422, "invalid_request", "Supply a valid username and password JSON object.") from None
 
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"], responses={
-    status: {"model": ErrorEnvelope} for status in (400, 401, 413, 415, 422, 503)})
+    status: {"model": ErrorEnvelope} for status in (400, 401, 408, 413, 415, 422, 429, 503)})
 
 
 @router.post("/login", response_model=LoginResponse, summary="Exchange private account credentials for a short-lived access token",

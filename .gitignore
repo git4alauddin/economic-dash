@@ -9,6 +9,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Frontend dependencies and generated output
 node_modules/
@@ -32,6 +36,9 @@ __pycache__/
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 *.sqlite
 *.sqlite3
 *.sqlite3-journal

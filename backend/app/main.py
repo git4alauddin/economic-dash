@@ -16,6 +16,7 @@ from app.auth.routes import router as auth_router
 from app.auth.settings import AuthSettings
 from app.auth.tokens import AuthService
 from app.auth.users import UserStore
+from app.auth.throttling import LoginLimiter
 from app.collectors.runner import CollectionRunner, configure_logging
 from app.collectors.scheduler import CollectorScheduler
 
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         await asyncio.to_thread(database.bootstrap)
         application.state.database = database
         application.state.auth_service = AuthService(auth_settings, UserStore(database)) if auth_settings.jwt_signing_key is not None else None
+        application.state.login_limiter = LoginLimiter(auth_settings)
         if scheduler_settings.enabled:
             configure_logging()
         repository = SQLiteCollectionRepository(database)
@@ -55,7 +57,11 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         finally:
             await scheduler.stop()
 
-    application = FastAPI(title="Economic Indicators API", version="0.1.0", lifespan=lifespan)
+    production = settings.app_env == "production"
+    application = FastAPI(title="Economic Indicators API", version="0.1.0", lifespan=lifespan,
+                          docs_url=None if production else "/docs",
+                          redoc_url=None if production else "/redoc",
+                          openapi_url=None if production else "/openapi.json")
     install_api(application)
     application.include_router(auth_router)
     application.add_middleware(
@@ -64,7 +70,7 @@ def create_app(settings: Settings | None = None, *, scheduler_settings: Schedule
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "If-None-Match", "Content-Type"],
-        expose_headers=["ETag", "X-Poll-Interval"],
+        expose_headers=["ETag", "X-Poll-Interval", "Retry-After"],
     )
 
     @application.get("/")

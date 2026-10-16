@@ -19,6 +19,10 @@ class AuthSettings(BaseSettings):
     jwt_audience: str = Field(default="economic-dash-web", min_length=1, max_length=100)
     access_token_minutes: int = Field(default=15, ge=5, le=30)
     clock_skew_seconds: int = Field(default=5, ge=0, le=30)
+    login_client_attempts: int = Field(default=10, ge=1, le=100)
+    login_global_attempts: int = Field(default=60, ge=1, le=1000)
+    login_window_seconds: int = Field(default=60, ge=1, le=3600)
+    login_max_clients: int = Field(default=1024, ge=1, le=10000)
 
     @field_validator("jwt_signing_key")
     @classmethod

@@ -1,7 +1,9 @@
 """Load and validate backend environment configuration."""
 
 from functools import lru_cache
+from ipaddress import ip_address, ip_network
 from pathlib import Path
+import re
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
@@ -16,11 +18,13 @@ class Settings(BaseSettings):
         env_file=BACKEND_DIRECTORY / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     app_env: Literal["development", "test", "production"] = "development"
     api_host: str = Field(default="127.0.0.1", min_length=1)
     api_port: int = Field(default=8000, ge=1, le=65535)
+    trusted_proxy_ips: list[str] = Field(default_factory=list, max_length=32)
     cors_allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:5173",
@@ -31,7 +35,7 @@ class Settings(BaseSettings):
     @field_validator("cors_allowed_origins")
     @classmethod
     def validate_origins(cls, origins: list[str]) -> list[str]:
-        if not origins:
+        if not origins or len(origins) > 16 or len(set(origins)) != len(origins):
             raise ValueError("At least one frontend origin must be configured.")
 
         for origin in origins:
@@ -46,12 +50,35 @@ class Settings(BaseSettings):
                 or parsed.query
                 or parsed.fragment
                 or any(character.isspace() for character in origin)
+                or len(origin) > 512
+                or any(ord(character) < 33 or ord(character) > 126 for character in origin)
+                or "\\" in origin
+                or "%" in origin
+                or parsed.netloc.endswith(":")
             ):
                 raise ValueError("CORS origins must be exact HTTP(S) origins without paths.")
             # Accessing port also rejects malformed or out-of-range port values.
             _ = parsed.port
+            try:
+                ip_address(parsed.hostname)
+            except ValueError:
+                if len(parsed.hostname) > 253 or any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label)
+                    for label in parsed.hostname.split(".")):
+                    raise ValueError("CORS origins must have a valid hostname.") from None
 
         return origins
+
+    @field_validator("trusted_proxy_ips")
+    @classmethod
+    def validate_proxy_peers(cls, peers: list[str]) -> list[str]:
+        for peer in peers:
+            try:
+                network = ip_network(peer, strict=False)
+            except ValueError:
+                raise ValueError("Trusted proxies must be explicit IP addresses or CIDR networks.") from None
+            if network.prefixlen == 0:
+                raise ValueError("Trusting every proxy is not permitted.")
+        return peers
 
     @model_validator(mode="after")
     def validate_production_origin(self) -> Self:
@@ -61,6 +88,16 @@ class Settings(BaseSettings):
                 or not self.cors_allowed_origins[0].startswith("https://")
             ):
                 raise ValueError("Production requires exactly one HTTPS frontend origin.")
+            host = urlsplit(self.cors_allowed_origins[0]).hostname
+            if host == "localhost" or host.endswith(".localhost"):
+                raise ValueError("Production cannot allow local development origins.")
+            try:
+                address = ip_address(host)
+            except ValueError:
+                pass
+            else:
+                if not address.is_global:
+                    raise ValueError("Production cannot allow local development origins.")
         return self
 
 
