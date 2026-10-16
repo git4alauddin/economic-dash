@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from pathlib import Path
+from secrets import token_hex
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.api import require_dashboard_access
 from app.api_models import DashboardData, Envelope
+from app.auth.settings import AuthSettings
 from app.collectors.handoff import RepositoryBridge
 from app.config import DatabaseSettings, SchedulerSettings, Settings
 from app.main import create_app
@@ -25,9 +27,10 @@ class ApiTests(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.application = create_app(Settings(_env_file=None, app_env="test"),
+            auth_settings=AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32)),
             database_settings=DatabaseSettings(_env_file=None, app_env="test", directory=Path(directory.name) / "db"),
             scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))
-        # M5 must supply the real verifier; this override only tests the read layer.
+        # Projection tests isolate the read layer; JWT acceptance has its own tests.
         self.application.dependency_overrides[require_dashboard_access] = lambda: None
         self.client = self.enterContext(TestClient(self.application))
         self.clock = self.enterContext(patch("app.api.datetime"))
@@ -52,8 +55,8 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(response.headers["www-authenticate"], "Bearer")
                 self.assertEqual(response.json()["error"]["code"], "authentication_required")
                 response = self.client.get("/api/v1" + path, headers={"Authorization": "Bearer unverified-test-token"})
-                self.assertEqual(response.status_code, 503)
-                self.assertEqual(response.json()["error"]["code"], "authentication_not_configured")
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.json()["error"]["code"], "authentication_invalid")
                 self.assertNotIn("unverified-test-token", response.text)
 
     def test_openapi_declares_models_bearer_security_bounds_and_error_schemas(self):

@@ -1,8 +1,4 @@
-"""Protected v1 read routes. M5 replaces require_dashboard_access with JWT verification.
-
-The default guard rejects all access; dependency overrides are for explicit tests
-and M5 integration only. No development token or publicly enabled ingest exists.
-"""
+"""JWT-protected v1 reads; authorization precedes SQL and conditional responses."""
 
 from datetime import datetime, timezone
 import sqlite3
@@ -11,29 +7,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException
 
 from app import api_projection as project
+from app.api_errors import ApiError
+from app.auth.access import require_identity as require_dashboard_access
 from app.api_models import CatalogIndicator, DashboardData, Envelope, ErrorEnvelope, HealthResponse, HistoryData, ResponsePanel, ResponseTicker
 from app.queries import DashboardQueries, QueryIntegrityError, QueryLimitExceeded, UnknownIndicator, UnknownSeries
 from app.migrations import SCHEMA_VERSION
 from app.update_delivery import conditional_response
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str, *, headers=None):
-        self.status, self.code, self.message, self.headers = status, code, message, headers
-
-
-bearer = HTTPBearer(auto_error=False, scheme_name="DashboardBearer", description="JWT access token. Dashboard route authorization wiring follows in M5.4.")
-
-
-def require_dashboard_access(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
-    if credentials is None:
-        raise ApiError(401, "authentication_required", "Sign in is required.", headers={"WWW-Authenticate": "Bearer"})
-    raise ApiError(503, "authentication_not_configured", "Authentication is not configured yet.")
 
 
 def queries(request: Request) -> DashboardQueries:

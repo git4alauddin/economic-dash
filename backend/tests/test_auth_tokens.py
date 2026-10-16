@@ -73,8 +73,7 @@ class AuthTokenTests(unittest.TestCase):
         for result in (response, identity):
             self.assertEqual(result.headers["cache-control"], "no-store")
             self.assertNotIn("set-cookie", result.headers)
-        # M5.4 owns replacing the existing data-route placeholder guard.
-        self.assertEqual(self.client.get("/api/v1/dashboard", headers={"Authorization": "Bearer " + data["access_token"]}).status_code, 503)
+        self.assertEqual(self.client.get("/api/v1/dashboard", headers={"Authorization": "Bearer " + data["access_token"]}).status_code, 200)
 
     def test_unknown_wrong_and_inactive_credentials_have_identical_generic_failure(self):
         failures = []

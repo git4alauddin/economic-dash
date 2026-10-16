@@ -148,7 +148,7 @@ class UpdateDeliveryTests(unittest.TestCase):
         tag = self.client.get("/api/v1/dashboard").headers["etag"]
         self.application.dependency_overrides.clear()
         self.assertEqual(self.client.get("/api/v1/dashboard", headers={"If-None-Match": tag}).status_code, 401)
-        self.assertEqual(self.client.get("/api/v1/dashboard", headers={"If-None-Match": "*", "Authorization": "Bearer invalid"}).status_code, 503)
+        self.assertEqual(self.client.get("/api/v1/dashboard", headers={"If-None-Match": "*", "Authorization": "Bearer invalid"}).status_code, 401)
         self.application.dependency_overrides[require_dashboard_access] = lambda: None
         with patch.object(self.application.state.dashboard_queries, "dashboard", side_effect=sqlite3.OperationalError("unavailable")):
             self.assertEqual(self.client.get("/api/v1/dashboard", headers={"If-None-Match": tag}).status_code, 503)

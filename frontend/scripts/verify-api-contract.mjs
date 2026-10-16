@@ -51,15 +51,17 @@ try {
   }
   if (transcript) {
     const { createDashboardReader } = await server.ssrLoadModule("/src/data/dashboard-client.ts");
+    const token = payloads.bearer_token ?? "explicit-test-override";
     let index = 0;
     const reader = createDashboardReader(async (_url, options) => {
       const item = transcript[index++];
+      assert.ok(options.headers.Authorization === `Bearer ${token}`, "Reader lost its bearer authorization");
       assert.equal(options.headers["If-None-Match"] ?? null, item.expected_if_none_match);
       return new Response(item.status === 200 ? JSON.stringify(item.body) : null, { status: item.status, headers: item.headers });
     });
     let previous = null;
     for (const item of transcript) {
-      const result = await reader.read(new AbortController().signal, "explicit-test-override");
+      const result = await reader.read(new AbortController().signal, token);
       if (item.status === 304) { assert.equal(result.unchanged, true); assert.equal(result.view.snapshot, previous); }
       else if (item.status === 401) { assert.equal(result.unauthorized, true); assert.equal(result.view.snapshot, null); }
       else assert.equal(result.view.snapshot.observations.gdp_growth.gdp_growth_world.latest.status, item.expected_world_status);

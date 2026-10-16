@@ -1,9 +1,9 @@
 """Real collector -> temporary SQL -> API -> frontend check; saves no reports.
 
 Run from backend: python -m app.verify_integration [--all-sources].
-Requires the frontend's installed Node dependencies. Authorization is explicitly
-overridden only on this command's private test application; JWT/UI/hosting
-acceptance remains M5/M6/M7. The configured application database is never used.
+Requires the frontend's installed Node dependencies. Signs in with a private
+temporary account/key and exercises real JWT guards without overrides. UI and
+hosted acceptance remain M6/M7. The configured application database is never used.
 """
 
 import argparse
@@ -11,14 +11,15 @@ import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from secrets import token_hex, token_urlsafe
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
 from fastapi.testclient import TestClient
 
-from app.api import require_dashboard_access
 from app.api_models import DashboardData, Envelope
+from app.auth.settings import AuthSettings
 from app.collectors.catalog import SourceRegistry
 from app.collectors.handoff import RepositoryBridge
 from app.collectors.history import trade_balance
@@ -112,11 +113,17 @@ def validate_dashboard(body, service, *, required_sources=()):
 
 def check_api(settings, sources):
     """Reopen committed SQL with a fresh app; exercise real routes and failures."""
+    require(settings.app_env == "test", "Integration checks require isolated test storage settings.")
+    auth = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32))
+    username, password = "integration_check", token_urlsafe(48)
     def application():
         return create_app(Settings(_env_file=None, app_env="test"), database_settings=settings,
+                          auth_settings=auth,
                           scheduler_settings=SchedulerSettings(_env_file=None, enabled=False))
     app = application()
     with TestClient(app) as client:
+        users = app.state.auth_service.users
+        users.provision(username, password)
         require(client.get("/health").status_code == 200, "Database health failed.")
         paths = ["/api/v1/dashboard", "/api/v1/indicators", "/api/v1/ticker"]
         service = app.state.dashboard_queries
@@ -125,8 +132,13 @@ def check_api(settings, sources):
             paths.extend(f"/api/v1/indicators/{pid}/history?series_id={s['id']}" for s in panel["series"])
         for path in paths:
             require(client.get(path).status_code == 401, "Missing credentials reached data.")
-            require(client.get(path, headers={"Authorization": "Bearer unverified"}).status_code == 503, "Unverified credentials reached data.")
-        app.dependency_overrides[require_dashboard_access] = lambda: None  # Explicit test-only seam.
+            require(client.get(path, headers={"Authorization": "Bearer unverified"}).status_code == 401, "Unverified credentials reached data.")
+        login = client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        require(login.status_code == 200, "Private integration account could not sign in.")
+        token = login.json()["access_token"]
+        client.headers["Authorization"] = "Bearer " + token
+        require(client.get("/api/v1/auth/me").status_code == 200, "JWT identity verification failed.")
+        require(not app.dependency_overrides, "Integration must not override authorization.")
         for path in paths:
             require(client.get(path).status_code == 200, "A declared read route failed.")
         first = client.get("/api/v1/dashboard?window=24")
@@ -151,7 +163,7 @@ def check_api(settings, sources):
                 if old["value"] is not None:
                     require(new["status"] == "stale" and new["retention_allowed"], "Outage lost retained state.")
                     require(all(new[k] == old[k] for k in ("value", "as_of", "retrieved_at", "sources", "observation_period")), "Outage changed observation provenance.")
-        app.dependency_overrides.clear()
+        users.set_active(username, False)
         denied = client.get("/api/v1/dashboard?window=24", headers={"If-None-Match": failed.headers["etag"]})
         require(denied.status_code == 401, "Authorization failure became a cached response.")
         transcript = []
@@ -161,12 +173,18 @@ def check_api(settings, sources):
                 item["body"] = response.json()
                 item["expected_world_status"] = item["body"]["data"]["panels"]["gdp_growth"]["series"]["gdp_growth_world"]["latest"]["status"]
             transcript.append(item)
+        users.set_active(username, True)
     restarted = application()
-    restarted.dependency_overrides[require_dashboard_access] = lambda: None
     with TestClient(restarted) as client:
+        login = client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        require(login.status_code == 200, "Reopened private account could not sign in.")
+        client.headers["Authorization"] = "Bearer " + login.json()["access_token"]
+        require(client.get("/api/v1/dashboard?window=24", headers={"Authorization": "Bearer " + token}).status_code == 401,
+                "Revoked token became valid after account re-enable/restart.")
         reloaded = client.get("/api/v1/dashboard?window=24")
         require(reloaded.status_code == 200 and reloaded.json()["data"] == failed.json()["data"], "Fresh application lost durable failure/data state.")
-    return counts | {"read_routes_checked": len(paths), "restart_reload": True, "failure_retention": True}, {"polling": transcript}
+    return counts | {"read_routes_checked": len(paths), "restart_reload": True, "failure_retention": True,
+                     "authentication_verified": True}, {"polling": transcript, "bearer_token": token}
 
 
 async def verify(*, all_sources=False):
@@ -190,7 +208,7 @@ async def verify(*, all_sources=False):
         require(completed.returncode == 0, "Frontend contract verification failed: " + completed.stderr[-2000:])
         return counts | {"result": "PASS", "scope": "local_integration_test", "source_count": len(sources),
             "frontend_adapter_verified": True, "conditional_statuses": [r["status"] for r in transcript["polling"]],
-            "authentication_verified": False, "authentication_mode": "explicit_test_dependency_override",
+            "authentication_verified": True, "authentication_mode": "real_jwt_private_temporary_account",
             "ui_e2e_verified": False, "hosted_acceptance_verified": False, "controlled_outage": True}
 
 

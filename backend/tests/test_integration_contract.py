@@ -24,6 +24,7 @@ class IntegrationContractTests(unittest.TestCase):
         self.assertEqual((result["panels"], result["series"], result["summary_slots"], result["requirements"]), (6, 13, 12, 17))
         self.assertEqual((result["supported_series"], result["blocked_requirements"], result["read_routes_checked"]), (9, 8, 22))
         self.assertTrue(result["restart_reload"] and result["failure_retention"])
+        self.assertTrue(result["authentication_verified"])
         self.assertEqual([r["status"] for r in transcript["polling"]], [200, 304, 200, 401])
 
     def test_acceptance_rejects_tampered_values_attribution_and_missing_requirements(self):

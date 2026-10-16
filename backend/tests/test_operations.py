@@ -104,7 +104,7 @@ class ApiBoundaryTests(unittest.TestCase):
         with patch.object(self.application.state.database, "connection", side_effect=AssertionError("Denied request touched DB")):
             for path in ROUTES:
                 for headers, expected in (({}, 401), ({"Authorization": "Basic denied"}, 401),
-                        ({"Authorization": "Bearer denied", "If-None-Match": "*"}, 503)):
+                        ({"Authorization": "Bearer denied", "If-None-Match": "*"}, 401)):
                     response = self.client.get("/api/v1" + path, headers=headers)
                     self.assertEqual(response.status_code, expected, response.text)
                     self.assertNotIn("etag", response.headers)
