@@ -13,7 +13,7 @@ from app.collectors.handoff import catalog_fingerprint, requirement_bindings
 from app.collectors.normalization import SourceNormalizer
 from app.config import DatabaseSettings
 from app.database import Database
-from app.migrations import Migration, migration_plan, migrate, statements
+from app.migrations import SCHEMA_VERSION, Migration, migration_plan, migrate, statements
 from test_normalization import cpi, expenditure, gdp, trade, wb
 
 
@@ -94,8 +94,8 @@ class MigrationTests(unittest.TestCase):
             upgraded = [tuple(r) for r in connection.execute("SELECT type, name, sql FROM sqlite_schema WHERE name != 'retained_probe' ORDER BY type, name")]
             self.assertEqual(upgraded, schema)
             self.assertEqual(connection.execute("SELECT value FROM retained_probe").fetchone()[0], "pre-migration")
-            self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], 1)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], SCHEMA_VERSION)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
 
     def test_all_m3_definitions_periods_and_multiple_source_references_fit_schema(self):
         with self.database.transaction() as connection:
@@ -178,14 +178,14 @@ class MigrationTests(unittest.TestCase):
     def test_failed_upgrade_rolls_back_ddl_data_ledger_and_version(self):
         with self.database.transaction() as connection:
             self.populate_catalog(connection)
-        failing = Migration(2, "broken", "CREATE TABLE upgrade_probe(id INTEGER); INSERT INTO indicators VALUES ('probe','probe'); INSERT INTO missing_table VALUES (1);")
-        with patch("app.migrations.SCHEMA_VERSION", 2), patch("app.migrations.migration_plan", return_value=migration_plan() + (failing,)):
+        failing = Migration(SCHEMA_VERSION + 1, "broken", "CREATE TABLE upgrade_probe(id INTEGER); INSERT INTO indicators VALUES ('probe','probe'); INSERT INTO missing_table VALUES (1);")
+        with patch("app.migrations.SCHEMA_VERSION", SCHEMA_VERSION + 1), patch("app.migrations.migration_plan", return_value=migration_plan() + (failing,)):
             with self.database.connection() as connection, self.assertRaises(sqlite3.OperationalError):
                 migrate(connection)
         with self.database.connection() as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertIsNone(connection.execute("SELECT name FROM sqlite_schema WHERE name='upgrade_probe'").fetchone())
-            self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], SCHEMA_VERSION)
             self.assertIsNone(connection.execute("SELECT 1 FROM indicators WHERE indicator_id='probe'").fetchone())
             self.assertEqual(connection.execute("SELECT count(*) FROM requirement_bindings").fetchone()[0], 17)
         self.database.bootstrap()
@@ -193,7 +193,7 @@ class MigrationTests(unittest.TestCase):
     def test_applied_migration_checksum_and_missing_ledger_fail_closed(self):
         original = migration_plan()[0]
         modified = Migration(1, original.name, original.sql + "\n-- edited after application\n")
-        with patch("app.migrations.migration_plan", return_value=(modified,)):
+        with patch("app.migrations.migration_plan", return_value=(modified,) + migration_plan()[1:]):
             with self.assertRaisesRegex(RuntimeError, "checksum mismatch"):
                 self.database.bootstrap()
         with self.database.connection() as connection:
@@ -204,21 +204,21 @@ class MigrationTests(unittest.TestCase):
     def test_successful_forward_upgrade_commits_once_and_preserves_rows(self):
         with self.database.transaction() as connection:
             self.populate_catalog(connection)
-        following = Migration(2, "forward_probe", "CREATE TABLE forward_probe(id INTEGER PRIMARY KEY) STRICT; INSERT INTO forward_probe VALUES (1);")
+        following = Migration(SCHEMA_VERSION + 1, "forward_probe", "CREATE TABLE forward_probe(id INTEGER PRIMARY KEY) STRICT; INSERT INTO forward_probe VALUES (1);")
         plan = migration_plan() + (following,)
-        with patch("app.migrations.SCHEMA_VERSION", 2), patch("app.migrations.migration_plan", return_value=plan):
+        with patch("app.migrations.SCHEMA_VERSION", SCHEMA_VERSION + 1), patch("app.migrations.migration_plan", return_value=plan):
             with self.database.connection() as connection:
                 migrate(connection)
                 migrate(connection)
-                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION + 1)
                 self.assertEqual(connection.execute("SELECT count(*) FROM forward_probe").fetchone()[0], 1)
-                self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], 2)
+                self.assertEqual(connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], SCHEMA_VERSION + 1)
                 self.assertEqual(connection.execute("SELECT count(*) FROM requirement_bindings").fetchone()[0], 17)
 
     def test_failed_first_install_leaves_no_schema_or_migration_ledger(self):
         other = Database(DatabaseSettings(_env_file=None, directory=self.database.settings.directory / "failed-install"))
         broken = Migration(1, "broken_first", "CREATE TABLE partial_schema(id INTEGER); INSERT INTO nonexistent VALUES (1);")
-        with patch("app.migrations.migration_plan", return_value=(broken,)):
+        with patch("app.migrations.SCHEMA_VERSION", 1), patch("app.migrations.migration_plan", return_value=(broken,)):
             with self.assertRaises(sqlite3.OperationalError):
                 other.bootstrap()
         with other.connection() as connection:

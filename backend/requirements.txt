@@ -1,6 +1,9 @@
 annotated-doc==0.0.5      # via fastapi
 annotated-types==0.8.0    # via pydantic
 anyio==4.15.1             # via httpx2, starlette
+argon2-cffi==25.1.0      # via -r requirements.in
+argon2-cffi-bindings==26.1.0  # via argon2-cffi
+cffi==2.1.1              # via argon2-cffi-bindings
 click==8.5.0              # via uvicorn
 fastapi==0.143.2          # via -r requirements.in
 h11==0.16.0               # via httpcore2, uvicorn
@@ -9,6 +12,7 @@ httpx2==2.13.1            # via -r requirements.in
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'  # via httpx2
 idna==3.20                # via anyio, httpx2
 opentelemetry-api==1.45.1  # via fastapi
+pycparser==3.11          # via cffi
 pydantic==2.14.1          # via fastapi, pydantic-settings
 pydantic-core==2.50.1     # via pydantic
 pydantic-settings==2.16.0  # via -r requirements.in

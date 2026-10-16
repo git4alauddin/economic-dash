@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from app.config import BACKEND_DIRECTORY, DatabaseSettings, SchedulerSettings, Settings
 from app.database import Database
+from app.migrations import SCHEMA_VERSION
 from app.main import create_app
 
 
@@ -54,7 +55,7 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
             self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone()[0], 50)
             self.assertEqual(connection.execute("PRAGMA trusted_schema").fetchone()[0], 0)
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(connection.execute("SELECT count(*) FROM observations").fetchone()[0], 0)
         with self.assertRaises(sqlite3.ProgrammingError):
             connection.execute("SELECT 1")

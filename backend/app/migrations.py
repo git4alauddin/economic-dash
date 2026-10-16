@@ -8,7 +8,7 @@ import re
 import sqlite3
 from typing import Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SQL_DIRECTORY = Path(__file__).with_name("sql")
 
 
@@ -25,7 +25,10 @@ class Migration:
 
 
 def migration_plan() -> tuple[Migration, ...]:
-    return (Migration(1, "initial", (SQL_DIRECTORY / "001_initial.sql").read_text(encoding="utf-8")),)
+    return (
+        Migration(1, "initial", (SQL_DIRECTORY / "001_initial.sql").read_text(encoding="utf-8")),
+        Migration(2, "auth_users", (SQL_DIRECTORY / "002_auth_users.sql").read_text(encoding="utf-8")),
+    )
 
 
 def statements(sql: str) -> Iterator[str]:
