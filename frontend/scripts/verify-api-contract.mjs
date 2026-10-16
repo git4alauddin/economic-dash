@@ -11,7 +11,7 @@ for await (const chunk of process.stdin) input += chunk;
 const payloads = JSON.parse(input);
 const transcript = !Array.isArray(payloads) && payloads.polling ? payloads.polling : null;
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-  cacheDir: "node_modules/.cache/api-contract", plugins: [react()], server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  cacheDir: "node_modules/.cache/api-contract", plugins: [react()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 try {
   const { adaptDashboard } = await server.ssrLoadModule("/src/data/dashboard-adapter.ts");
   const { panelBindings } = await server.ssrLoadModule("/src/data/dashboard-contract.ts");

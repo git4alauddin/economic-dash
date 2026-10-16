@@ -44,7 +44,7 @@ for (const [id, source] of Object.entries(catalog.publishers)) {
 for (const key of ["missing", "history", "comparison", "source_metadata", "dates", "freshness", "normalization", "chart"]) text(catalog.common_requirements[key], key);
 assert.equal(catalog.wire_requirements.status, "M2_draft_for_M4_acceptance");
 
-const server = await createServer({ root, configFile: false, logLevel: "error", optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, appType: "custom" });
+const server = await createServer({ root, configFile: false, logLevel: "error", optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 try {
   const { dashboardPanels } = await server.ssrLoadModule("/src/dashboard-panels.ts");
   const { panelBindings } = await server.ssrLoadModule("/src/data/dashboard-contract.ts");

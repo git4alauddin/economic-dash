@@ -11,7 +11,7 @@ import { contrastRatio } from "./audit-ui.mjs";
 const server = await createServer({
   root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
   cacheDir: "node_modules/.cache/ui-tests",
-  plugins: [react()], server: { middlewareMode: true, hmr: false }, appType: "custom",
+  plugins: [react()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
 });
 try {
   const format = await server.ssrLoadModule("/src/ui/format.ts");
@@ -562,7 +562,14 @@ try {
   await test("dense histories retain every observation and table row with one chart Tab stop", () => {
     const labels=Array.from({length:500},(_,index)=>String(1500+index));
     const points=labels.flatMap((label,index)=>[{id:`a:${index}`,index,label:`A ${label}`,value:'0'},{id:`b:${index}`,index,label:`B ${label}`,value:'5'}]);
-    const html=render(ChartFrame,{title:'Dense synthetic history',description:'Test',labels,points,domain:[0,10],ticks:['0','5','10'],unit:'percent',precision:2,state:'fresh'});
+    const props={title:'Dense synthetic history',description:'Test',labels,points,domain:[0,10],ticks:['0','5','10'],unit:'percent',precision:2,state:'fresh'};
+    render(ChartFrame,props); // Warm transforms/formatters before timing.
+    const samples=Array.from({length:5},()=>{const start=performance.now();render(ChartFrame,props);return performance.now()-start});
+    const p95=[...samples].sort((a,b)=>a-b).at(-1);
+    assert.ok(p95<2000,`Local 1000-point SSR smoke exceeded 2s: ${p95}`);
+    console.log(JSON.stringify({localOnly:true,synthetic:true,benchmark:'1000-point chart SSR',samples:5,
+      medianMs:Math.round([...samples].sort((a,b)=>a-b)[2]*100)/100,p95Ms:Math.round(p95*100)/100,budgetMs:2000}));
+    const html=render(ChartFrame,props);
     assert.equal((html.match(/tabindex="0"/g)??[]).length,1);
     assert.equal((html.match(/class="chart-point"/g)??[]).length,1000);
     assert.equal((html.match(/<tr>/g)??[]).length,1001);
@@ -584,6 +591,27 @@ try {
     assert.ok(contrastRatio('#4a9cff','#145169')>=3);
     const html=render(panels.ExpenditurePanel,{data:panelFixtures[5]});
     assert.ok(html.includes('fill="#081427"') && html.includes('class="plot-bar"') && html.includes('stroke="#4a9cff"'));
+  });
+  await test("maximum-length labels, mixed freshness and missing points survive adaptation without fabricated values", () => {
+    const raw=dashboardFixture(),series=raw.data.panels.gdp_growth.series;
+    const world=series.gdp_growth_world,india=series.gdp_growth_india;
+    const label='<publisher>&'+ 'x'.repeat(228);
+    assert.equal(label.length,240);
+    world.name=label; world.latest.status='stale'; world.history.status='stale';
+    const original=structuredClone(world.latest);
+    const missing=world.history.points[2];missing.value=null;missing.status='unavailable';
+    india.latest.status='fresh';
+    const data=adapter.adaptDashboard(raw).panels.gdp_growth;
+    assert.equal(data.state,'stale');assert.equal(data.seriesDetails[0].state,'fresh');
+    assert.equal(data.seriesDetails[1].state,'stale');assert.equal(data.seriesDetails[1].label,label);
+    assert.equal(data.chart.series[1].values[2],null);
+    assert.equal(data.summaries[1].value,original.value);
+    assert.deepEqual(data.seriesDetails[1].sources,original.sources);
+    assert.equal(data.seriesDetails[1].asOf.value,original.as_of);
+    const html=render(panels.GdpPanel,{data});
+    assert.ok(html.includes('&lt;publisher&gt;&amp;'));assert.ok(!html.includes('<publisher>'));
+    assert.ok(html.includes('Stale observation')&&html.includes('>—</td>'));
+    assert.ok(!/NaN|Infinity/.test(html));
   });
 } finally {
   await server.close();

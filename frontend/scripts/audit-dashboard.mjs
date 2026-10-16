@@ -6,10 +6,10 @@ async function waitFor(evaluate, expression) {
     if (await evaluate(expression)) return;
     await new Promise((resolve) => setTimeout(resolve, 30));
   }
-  throw Error("Usability interaction did not settle");
+  throw Error("Usability interaction did not settle: " + expression);
 }
 async function key(command, value) {
-  const windowsVirtualKeyCode = { Enter:13, Tab:9, Escape:27, PageDown:34, End:35, Home:36, ArrowRight:39 }[value];
+  const windowsVirtualKeyCode = { Enter:13, Tab:9, Escape:27, PageUp:33, PageDown:34, End:35, Home:36, ArrowRight:39 }[value];
   await command("Input.dispatchKeyEvent", { type: "keyDown", key: value, code: value, windowsVirtualKeyCode, ...(value === "Enter" ? { text: "\r" } : {}) });
   await command("Input.dispatchKeyEvent", { type: "keyUp", key: value, code: value, windowsVirtualKeyCode });
 }
@@ -37,9 +37,22 @@ async function keyboardAudit(command, evaluate) {
   checks.namedControlFocus = await evaluate("document.activeElement.tagName==='SELECT'&&!!document.activeElement.getAttribute('aria-label')&&getComputedStyle(document.activeElement).outlineStyle!=='none'");
   checks.controlSize = await evaluate("Array.from(document.querySelectorAll('.panel-data-details[open] select,.panel-data-details[open] button')).every(node=>parseFloat(getComputedStyle(node).fontSize)>=14&&node.getBoundingClientRect().height>=24)");
   await evaluate("document.querySelector('.panel-data-details[open] .panel-data-popover').focus();document.activeElement.scrollIntoView({block:'center'});true");
+  // Let native focus/scroll targeting settle before sending a trusted scroll key.
+  await settle(evaluate);
+  await waitFor(evaluate, "document.activeElement.matches('.panel-data-popover')");
   await key(command, "PageDown");
-  await waitFor(evaluate, "document.querySelector('.panel-data-details[open] .panel-data-popover').scrollTop>0");
+  try { await waitFor(evaluate, "document.querySelector('.panel-data-details[open] .panel-data-popover').scrollTop>0"); }
+  catch {
+    throw Error("Native history scroll failed: "+JSON.stringify(await evaluate(`(()=>{const node=document.querySelector('.panel-data-details[open] .panel-data-popover');
+      return {width:innerWidth,focused:document.activeElement===node,top:node.scrollTop,height:node.clientHeight,content:node.scrollHeight}})()`)));
+  }
   checks.historyScroll = true;
+  await key(command, "Home");
+  await waitFor(evaluate, "document.querySelector('.panel-data-details[open] .panel-data-popover').scrollTop===0");
+  await key(command, "End");
+  await waitFor(evaluate, "(()=>{const node=document.querySelector('.panel-data-details[open] .panel-data-popover');return node.scrollTop>=node.scrollHeight-node.clientHeight-1})()");
+  await key(command, "PageUp");
+  await waitFor(evaluate, "(()=>{const node=document.querySelector('.panel-data-details[open] .panel-data-popover');return node.scrollTop<node.scrollHeight-node.clientHeight-1})()");
   checks.popoverFits = await evaluate("(()=>{const popup=document.querySelector('.panel-data-details[open] .panel-data-popover'),b=popup.getBoundingClientRect();return b.left>=0&&b.right<=document.documentElement.clientWidth+1&&b.top>=0&&b.bottom<=innerHeight+1&&popup.scrollWidth<=popup.clientWidth+1})()");
   await key(command, "Escape");
   checks.detailsFocus = await evaluate("!document.querySelector('.panel-data-details').open&&document.activeElement.matches('.panel-data-details summary')");

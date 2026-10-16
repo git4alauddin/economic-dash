@@ -11,7 +11,15 @@ export default function PanelMetadata({ data, explorer }: { data?: PanelPresenta
       if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
     }}>
       <summary aria-label="Series details, history tables and sources">Series details</summary>
-      <div className="panel-data-popover" tabIndex={0} role="region" aria-label="Series details and history tables">
+      <div className="panel-data-popover" tabIndex={0} role="region" aria-label="Series details and history tables" onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const node = event.currentTarget, step = Math.max(24, node.clientHeight * 0.85);
+        const positions: Record<string, number> = { PageDown: node.scrollTop + step, PageUp: node.scrollTop - step,
+          ArrowDown: node.scrollTop + 40, ArrowUp: node.scrollTop - 40, Home: 0, End: node.scrollHeight };
+        if (Object.hasOwn(positions, event.key)) {
+          event.preventDefault(); node.scrollTo({ top: positions[event.key], behavior: "instant" });
+        }
+      }}>
         {data.detail && <p>{data.detail}</p>}
         {explorer && selection && <div className="panel-history-controls" aria-busy={selection.loading || selection.catalogLoading || selection.refreshing}>
           <p role="status">{selection.catalogLoading ? "Loading available periods…" : selection.message}</p>

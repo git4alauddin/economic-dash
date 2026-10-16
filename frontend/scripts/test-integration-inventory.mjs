@@ -7,7 +7,7 @@ import { assertIntegrationInventory } from "./integration-inventory.mjs";
 
 const read = async (file) => JSON.parse(await readFile(new URL(file, import.meta.url), "utf8"));
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-  logLevel: "silent", server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  logLevel: "silent", server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 try {
   const inventory = await read("../../backend/app/data/indicator-requirements.json");
   const catalog = await read("../../backend/app/data/source-catalog.json");

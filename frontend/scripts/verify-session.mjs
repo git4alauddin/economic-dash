@@ -11,6 +11,7 @@ import { build, preview, createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { privateDataBoundary } from "./private-data-boundary.mjs";
 import { auditDashboard } from "./audit-dashboard.mjs";
+import { auditReliability, timerAuditScript } from "./audit-reliability.mjs";
 
 const input = createInterface({ input: process.stdin }), lines = input[Symbol.asyncIterator]();
 const config = JSON.parse((await lines.next()).value);
@@ -27,6 +28,8 @@ let captureUpdates = false;
 let apiFault = null;
 let tokenFault = null;
 let visualAudit = null, visualImage = null;
+let reliabilityAudit = null;
+const requestTimings = new Map();
 let holdDashboard = false, heldDashboardRequest = null;
 const loadingFrames = [];
 async function waitFor(probe, description, timeout = 15000) {
@@ -35,7 +38,7 @@ async function waitFor(probe, description, timeout = 15000) {
   throw new Error(`Timed out: ${description}`);
 }
 try {
-  validator = await createServer({ root, configFile: false, cacheDir: "node_modules/.cache/session-validator", server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  validator = await createServer({ root, configFile: false, cacheDir: "node_modules/.cache/session-validator", server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   const { formatValue } = await validator.ssrLoadModule("/src/ui/format.ts");
   const { panelBindings } = await validator.ssrLoadModule("/src/data/dashboard-contract.ts");
   await build({ root, configFile: false, publicDir: false, plugins: [react(), privateDataBoundary(root)], logLevel: "error",
@@ -98,8 +101,24 @@ try {
     if (item.method === "Network.webSocketCreated") network.push(item.params.url);
     if (item.method === "Network.requestWillBeSent" && item.params.type === "Fetch") {
       const request = item.params.request;
+      if (config.reliability) requestTimings.set(item.params.requestId, {
+        path:new URL(request.url).pathname,start:item.params.timestamp,
+      });
       requests.push({ url: request.url, method: request.method, authenticated: !!request.headers.Authorization,
         conditional: !!request.headers["If-None-Match"] });
+    }
+    if (item.method === "Network.responseReceived" && requestTimings.has(item.params.requestId)) {
+      const timing=item.params.response.timing;
+      Object.assign(requestTimings.get(item.params.requestId), {
+        response:timing && timing.receiveHeadersEnd>=0 ? timing.requestTime+timing.receiveHeadersEnd/1000 : item.params.timestamp,
+        status:item.params.response.status,
+      });
+    }
+    if (item.method === "Network.loadingFinished" && requestTimings.has(item.params.requestId)) {
+      Object.assign(requestTimings.get(item.params.requestId), { finish:item.params.timestamp,bytes:item.params.encodedDataLength });
+    }
+    if (item.method === "Network.loadingFailed" && requestTimings.has(item.params.requestId)) {
+      Object.assign(requestTimings.get(item.params.requestId), { failed:true });
     }
     if (item.method === "Network.responseReceived" && item.params.type === "Fetch" && item.params.response.url === `${config.api_url}/api/v1/dashboard`) {
       statuses.push(item.params.response.status);
@@ -269,6 +288,7 @@ try {
     for(const name of ['localStorage','sessionStorage']) Object.defineProperty(window,name,{get(){throw Error('Storage disabled for session check')}});
     Object.defineProperty(document,'cookie',{get(){return ''},set(){throw Error('Cookies disabled for session check')}});
   ` });
+  if (config.reliability) await command("Page.addScriptToEvaluateOnNewDocument", { source:timerAuditScript });
   await command("Page.navigate", { url: `http://127.0.0.1:${config.frontend_port}/` });
   await visible(`!!document.querySelector('#username')`, "signed-out page");
   assert.equal(requests.length, 0, "Signed-out UI fetched protected data");
@@ -331,6 +351,21 @@ try {
     visualAudit.states = { ...visualAudit.states, [name]: delta };
   };
   await assertWorldTrace(world.status);
+  if (config.reliability) {
+    reliabilityAudit = await auditReliability({ command,evaluate,click,signIn,dashboard,visible,waitFor,
+      requests,timings:requestTimings,indicatorBodies,apiUrl:config.api_url,
+      hold:async()=>{
+        heldDashboardRequest=null; holdDashboard=true;
+        await command("Fetch.enable", { patterns:[{urlPattern:`${config.api_url}/api/v1/dashboard`,requestStage:"Request"}] });
+      },
+      isHeld:()=>!!heldDashboardRequest,
+      release:async()=>{
+        holdDashboard=false;
+        await command("Fetch.continueRequest", {requestId:heldDashboardRequest}); await command("Fetch.disable");
+      },
+    });
+    await assertWorldTrace(world.status);
+  }
   await verifyPanelInteractions(dashboardBodies[0].data.panels);
   captureUpdates = true;
   const scheduledVersions = new Set();
@@ -494,7 +529,8 @@ try {
     world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true,
     scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true,
     browser_token_cases_verified: true, server_token_rejection_clears_ui: true, cors_origins_verified: true,
-    public_assets_console_audited: true, ...(visualAudit ? { visualAudit } : {}), ...(visualImage ? { visualImage } : {}) }) + "\n");
+    public_assets_console_audited: true, ...(visualAudit ? { visualAudit } : {}), ...(visualImage ? { visualImage } : {}),
+    ...(reliabilityAudit ? { reliabilityAudit } : {}) }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);

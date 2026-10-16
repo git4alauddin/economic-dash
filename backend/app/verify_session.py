@@ -60,7 +60,7 @@ def audit_public_site(directory, markers, console):
     return count
 
 
-async def verify(*, all_sources=False, visual=False, inspect_visual=False):
+async def verify(*, all_sources=False, visual=False, inspect_visual=False, reliability=False):
     node = shutil.which("node")
     require(node is not None, "Node and frontend dependencies are required.")
     with TemporaryDirectory(prefix="economic-dash-session-") as temporary:
@@ -135,7 +135,10 @@ async def verify(*, all_sources=False, visual=False, inspect_visual=False):
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
         api_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
-        auth_settings = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32))
+        # Churn adds five successful logins to the existing auth matrix. Raise
+        # admission only for this disposable process; production policy is unchanged.
+        auth_settings = AuthSettings(_env_file=None, app_env="test", jwt_signing_key=token_hex(32),
+                                     login_client_attempts=30 if reliability else 10)
         app = create_app(Settings(_env_file=None, app_env="test", cors_allowed_origins=[f"http://127.0.0.1:{frontend_port}"]),
             database_settings=settings, scheduler_settings=SchedulerSettings(_env_file=None, enabled=False),
             auth_settings=auth_settings)
@@ -155,7 +158,8 @@ async def verify(*, all_sources=False, visual=False, inspect_visual=False):
             watchdog.start()
             process.stdin.write(json.dumps({"api_url": api_url, "frontend_port": frontend_port,
                                            "username": username, "password": password, "world_trace": trace,
-                                           "visual": visual or inspect_visual, "inspect_visual": inspect_visual}) + "\n")
+                                           "visual": visual or inspect_visual, "inspect_visual": inspect_visual,
+                                           "reliability": reliability}) + "\n")
             process.stdin.flush()
             result = None
             for line in process.stdout:
@@ -196,6 +200,7 @@ async def verify(*, all_sources=False, visual=False, inspect_visual=False):
             status = process.wait(timeout=10)
             require(status == 0 and result is not None, "Browser session check failed: " + errors[-2000:])
             return result | {"source_count": len(sources), "authentication_verified": True,
+                             "test_login_client_attempts": auth_settings.login_client_attempts,
                              "scope": "local_production_ui_and_real_api", "hosted_acceptance_verified": False}
         finally:
             if watchdog:
@@ -213,8 +218,10 @@ def main():
     parser.add_argument("--all-sources", action="store_true")
     parser.add_argument("--visual", action="store_true", help="Audit real-data viewport/usability in memory; no evidence files.")
     parser.add_argument("--inspect-visual", action="store_true", help="Also return one in-memory JPEG for interactive inspection.")
+    parser.add_argument("--reliability", action="store_true", help="Measure slow reads, request coalescing and session cleanup in memory.")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(verify(all_sources=args.all_sources, visual=args.visual, inspect_visual=args.inspect_visual)), sort_keys=True))
+    print(json.dumps(asyncio.run(verify(all_sources=args.all_sources, visual=args.visual,
+                                      inspect_visual=args.inspect_visual, reliability=args.reliability)), sort_keys=True))
 
 
 if __name__ == "__main__":

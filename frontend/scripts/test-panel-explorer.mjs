@@ -5,7 +5,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-  cacheDir: "node_modules/.cache/explorer-tests", plugins: [react()], server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  cacheDir: "node_modules/.cache/explorer-tests", plugins: [react()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 try {
   const { createPanelExplorer, catalogChoices, selectedPanel } = await server.ssrLoadModule("/src/data/panel-explorer.ts");
   const { dashboardFixture } = await server.ssrLoadModule("/src/preview/dashboard-fixtures.ts");

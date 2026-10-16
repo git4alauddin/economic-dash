@@ -7,7 +7,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 
 const server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-  cacheDir: "node_modules/.cache/auth-tests", plugins: [react()], server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  cacheDir: "node_modules/.cache/auth-tests", plugins: [react()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
 try {
   const { signInCredentials } = await server.ssrLoadModule("/src/auth/auth-client.ts");
   const { createAuthSession } = await server.ssrLoadModule("/src/auth/session.ts");
@@ -234,5 +234,28 @@ try {
       } }), (error) => error.kind === "invalid");
       assert.equal(canceledHeader, true); assert.equal(calls, 1);
     }
+  });
+  await test("one hundred login/logout cycles coalesce repeated actions and release all session timers", async () => {
+    const { session,time,requests }=sessionSetup();
+    let publications=0;
+    const unsubscribe=session.subscribe(()=>publications++);
+    try {
+      for(let cycle=0;cycle<100;cycle++) {
+        const before=requests.length;
+        await Promise.all(Array.from({length:10},()=>session.signIn("evaluator",password))); await settle();
+        assert.equal(requests.length-before,2,"Repeated sign-in spawned extra login/dashboard calls");
+        assert.equal(requests.at(-1).options.headers['If-None-Match'],undefined);
+        assert.equal(time.pending.size,2,"Session must own only expiry and the next poll");
+        await Promise.all(Array.from({length:10},()=>session.refresh()));
+        assert.equal(requests.length-before,3,"Repeated refresh spawned duplicate reads");
+        session.signOut();
+        assert.equal(time.pending.size,0);
+        assert.equal(session.getSnapshot().dashboard.snapshot,null);
+        await time.advance(60001);
+        assert.equal(requests.length-before,3,"Ended session restarted its poll");
+      }
+      unsubscribe(); const before=publications;
+      session.dispose(); assert.equal(publications,before,"Removed subscriber was retained");
+    } finally { unsubscribe(); session.dispose(); }
   });
 } finally { await server.close(); }
