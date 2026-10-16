@@ -1,10 +1,10 @@
 import { dashboardPanels } from "../dashboard-panels";
 import { panelBindings, type DataStatus } from "../data/dashboard-contract";
 import type { Unit } from "../ui/types";
-import type { DashboardResponseV1Draft, ResponseObservation, ResponseQuote } from "../data/dashboard-response";
+import type { DashboardResponseFixture, ResponseObservation, ResponseQuote } from "./dashboard-response-fixture";
 import { panelFixtures } from "./panel-fixtures";
 
-// SYNTHETIC_API_STATE_FIXTURES_ONLY — proposed wire format, never real observations.
+// SYNTHETIC_API_STATE_FIXTURES_ONLY — deliberately synthetic preview input, never real observations.
 export function dashboardFixture(retention = true) {
   const observation = (value: string | null, unit: Unit, year = "2025"): ResponseObservation => ({
     value, unit, status: "fresh" as DataStatus, definition_id: `synthetic_${unit}`,
@@ -32,7 +32,7 @@ export function dashboardFixture(retention = true) {
   const quote: ResponseQuote = { ...observation("81234.56", "index_points"), unit: "index_points", instrument_id: "synthetic_sensex", name: "SENSEX",
     change: "0", change_percent: "0", comparison_label: "vs synthetic previous close", precision: 2, market_status: "closed" };
   return { data: { panels, ticker: { status: "fresh" as DataStatus, cadence: "scheduled", cadence_label: "Synthetic schedule: every 60 seconds", items: [quote] } },
-    meta: { api_version: "v1", generated_at: "2025-01-03T12:00:00Z", version: "synthetic_snapshot_1", partial: false as boolean } } satisfies DashboardResponseV1Draft;
+    meta: { api_version: "v1", generated_at: "2025-01-03T12:00:00Z", version: "synthetic_snapshot_1", partial: false as boolean } } satisfies DashboardResponseFixture;
 }
 
 export const stateScenarioNames = ["fresh", "loading", "partial", "empty", "unavailable", "error", "retained", "no-retention", "mixed-retention", "malformed", "unauthorized", "dense"] as const;

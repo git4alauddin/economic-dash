@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
+import { assertIntegrationInventory } from "./integration-inventory.mjs";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -14,9 +15,14 @@ const server = await createServer({ root: fileURLToPath(new URL("../", import.me
 try {
   const { adaptDashboard } = await server.ssrLoadModule("/src/data/dashboard-adapter.ts");
   const { panelBindings } = await server.ssrLoadModule("/src/data/dashboard-contract.ts");
+  const { dashboardPanels } = await server.ssrLoadModule("/src/dashboard-panels.ts");
+  const { DASHBOARD_POLL_INTERVAL_MS } = await server.ssrLoadModule("/src/data/dashboard-poller.ts");
   const catalog = JSON.parse(await readFile(new URL("../../backend/app/data/source-catalog.json", import.meta.url), "utf8"));
+  const inventory = JSON.parse(await readFile(new URL("../../backend/app/data/indicator-requirements.json", import.meta.url), "utf8"));
   for (const payload of transcript ? transcript.filter((r) => r.status === 200).map((r) => r.body) : Array.isArray(payloads) ? payloads : [payloads]) {
     const snapshot = adaptDashboard(payload);
+    assertIntegrationInventory({ inventory, catalog, dashboardPanels, panelBindings,
+      pollIntervalMs: DASHBOARD_POLL_INTERVAL_MS, payload, snapshot });
     assert.equal(Object.keys(snapshot.panels).length, 6);
     assert.equal(snapshot.ticker.items.length, 3);
     assert.ok(!snapshot.issues.some((issue) => issue.includes("invalid") || issue.includes("unavailable")), snapshot.issues.join("; "));
