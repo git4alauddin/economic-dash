@@ -1,18 +1,18 @@
 :root {
   color-scheme: dark;
-  --font-body: Arial, "Helvetica Neue", sans-serif;
-  --color-page: #0a0a0a;
-  --color-ticker: #05102a;
-  --color-panel: #060a1d;
-  --color-panel-heading: #1e1f27;
-  --color-summary: #0b283b;
-  --color-text: #f4f7fa;
-  --color-muted: #aebdca;
-  --color-border: #293546;
-  --color-divider: #22576b;
-  --color-cyan: #0fcbff;
-  --color-positive: #45ff5b;
-  --color-ticker-positive: #69f6b8;
+  --font-body: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --color-page: #080e18;
+  --color-ticker: #0e1929;
+  --color-panel: #101a29;
+  --color-panel-heading: #142132;
+  --color-summary: #12283b;
+  --color-text: #edf3fa;
+  --color-muted: #b5c3d3;
+  --color-border: #2c3d52;
+  --color-divider: #31465b;
+  --color-cyan: #65d7f2;
+  --color-positive: #78e8b6;
+  --color-ticker-positive: #78e8b6;
   --color-negative: #d62d2a;
   --color-series-orange: #e99e10;
   --color-series-yellow: #f4e15c;
@@ -24,9 +24,12 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-7: 32px;
-  --radius-panel: 16px;
+  --radius-panel: 18px;
   --radius-summary: 12px;
-  --shadow-panel: 0 1px 2px #0008, inset 0 0 0 1px #ffffff03;
+  --radius-control: 8px;
+  --color-popover: #112035;
+  --shadow-panel: 0 10px 28px #00000026, inset 0 1px 0 #ffffff05;
+  --shadow-popover: 0 16px 40px #0007;
   --text-heading: 20px;
   --text-body: 16px;
   --text-small: 14px;
@@ -39,11 +42,10 @@
   --page-inset: clamp(16px, 2.4vw, 40px);
   --page-max-width: 1440px;
   --panel-background:
-    radial-gradient(ellipse at 100% 105%, #145169cc, transparent 44%),
-    radial-gradient(ellipse at 16% 0%, #105367ba, transparent 41%),
-    linear-gradient(135deg, #ffffff03, transparent 40%, #0002 72%),
+    radial-gradient(ellipse at 100% 105%, #19435b45, transparent 58%),
+    linear-gradient(155deg, #18273b55, transparent 58%),
     var(--color-panel);
   --summary-background:
-    radial-gradient(ellipse at 24% 0%, #14516b99, transparent 78%),
-    linear-gradient(125deg, var(--color-summary), #050e23);
+    linear-gradient(135deg, #17374b55, transparent 72%),
+    linear-gradient(125deg, var(--color-summary), #102033);
 }
