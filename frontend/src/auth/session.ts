@@ -2,6 +2,8 @@ import { signInCredentials, SignInError, type SessionUser } from "./auth-client"
 import { startDashboardPolling } from "../data/dashboard-poller";
 import { DashboardReadError, readIndicatorResource, type DashboardTransport } from "../data/dashboard-client";
 import { beginRefresh, initialDashboardView, type DashboardView } from "../data/dashboard-state";
+import { createSeedDashboard } from "../data/seed-dashboard";
+import type { DataMode } from "../data/data-mode";
 
 export interface SessionSnapshot {
   phase: "signed-out" | "signing-in" | "signed-in";
@@ -10,6 +12,7 @@ export interface SessionSnapshot {
   dashboard: DashboardView;
   refreshing: boolean;
   refreshSequence: number;
+  dataMode: DataMode;
 }
 interface Timers { schedule(callback: () => void, delay: number): unknown; cancel(handle: unknown): void; }
 const messages = {
@@ -23,20 +26,21 @@ export function createAuthSession({ transport, now = Date.now, timers = {
   schedule: (callback: () => void, delay: number) => globalThis.setTimeout(callback, delay),
   cancel: (handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
 } }: { transport?: DashboardTransport; now?: () => number; timers?: Timers } = {}) {
-  let snapshot: SessionSnapshot = { phase: "signed-out", user: null, message: "", dashboard: initialDashboardView, refreshing: false, refreshSequence: 0 };
+  let snapshot: SessionSnapshot = { phase: "signed-out", user: null, message: "", dashboard: initialDashboardView, refreshing: false, refreshSequence: 0, dataMode: "live" };
   const listeners = new Set<() => void>();
   let generation = 0, expiresAt = 0, expiryTimer: unknown = null;
   let pendingLogin: AbortController | null = null;
   let token = "", lifetime = new AbortController();
   let polling: ReturnType<typeof startDashboardPolling> | null = null;
+  let modeGeneration = 0;
   function publish(value: SessionSnapshot) { snapshot = value; listeners.forEach((listener) => listener()); }
   function end(message: string) {
-    generation++; pendingLogin?.abort(); pendingLogin = null;
+    generation++; modeGeneration++; pendingLogin?.abort(); pendingLogin = null;
     token = ""; lifetime.abort(); lifetime = new AbortController();
     polling?.stop(); polling = null; expiresAt = 0;
     if (expiryTimer !== null) timers.cancel(expiryTimer);
     expiryTimer = null;
-    publish({ phase: "signed-out", user: null, message, dashboard: initialDashboardView, refreshing: false, refreshSequence: 0 });
+    publish({ phase: "signed-out", user: null, message, dashboard: initialDashboardView, refreshing: false, refreshSequence: 0, dataMode: "live" });
   }
   function checkExpiry() {
     if (snapshot.phase === "signed-in" && now() >= expiresAt) end("Your session expired. Please sign in again.");
@@ -49,6 +53,25 @@ export function createAuthSession({ transport, now = Date.now, timers = {
       if (id === generation && snapshot.phase === "signed-in") expireWhenDue(id);
     }, Math.max(1, expiresAt - now()));
   }
+  function startLivePolling() {
+    if (snapshot.phase !== "signed-in" || snapshot.dataMode !== "live") return;
+    const id = generation, mode = modeGeneration;
+    polling = startDashboardPolling(token, (dashboard) => {
+      if (id !== generation || mode !== modeGeneration || snapshot.phase !== "signed-in" || snapshot.dataMode !== "live") return;
+      checkExpiry();
+      if (id === generation && mode === modeGeneration && snapshot.phase === "signed-in") publish({ ...snapshot, dashboard, refreshing: false, refreshSequence: snapshot.refreshSequence + 1 });
+    }, { transport, timers, onUnauthorized: () => { if (id === generation && mode === modeGeneration) end("Your session ended. Please sign in again."); } });
+  }
+  function setDataMode(dataMode: DataMode) {
+    checkExpiry();
+    if (snapshot.phase !== "signed-in" || dataMode === snapshot.dataMode || !["live", "seed"].includes(dataMode)) return;
+    modeGeneration++;
+    polling?.stop(); polling = null;
+    lifetime.abort(); lifetime = new AbortController();
+    publish({ ...snapshot, dataMode, dashboard: dataMode === "seed" ? createSeedDashboard() : initialDashboardView,
+      refreshing: dataMode === "live", refreshSequence: 0 });
+    if (dataMode === "live") startLivePolling();
+  }
   async function signIn(username: string, password: string) {
     if (snapshot.phase === "signing-in") return;
     end("");
@@ -60,13 +83,9 @@ export function createAuthSession({ transport, now = Date.now, timers = {
       if (id !== generation || controller.signal.aborted) return;
       expiresAt = Math.min(grant.expiresAt, now() + grant.lifetimeMs);
       token = grant.token;
-      publish({ phase: "signed-in", user: grant.user, message: "", dashboard: initialDashboardView, refreshing: true, refreshSequence: 0 });
+      publish({ phase: "signed-in", user: grant.user, message: "", dashboard: initialDashboardView, refreshing: true, refreshSequence: 0, dataMode: "live" });
       expireWhenDue(id);
-      polling = startDashboardPolling(grant.token, (dashboard) => {
-        if (id !== generation || snapshot.phase !== "signed-in") return;
-        checkExpiry();
-        if (id === generation && snapshot.phase === "signed-in") publish({ ...snapshot, dashboard, refreshing: false, refreshSequence: snapshot.refreshSequence + 1 });
-      }, { transport, timers, onUnauthorized: () => { if (id === generation) end("Your session ended. Please sign in again."); } });
+      startLivePolling();
     } catch (error) {
       if (id === generation && !controller.signal.aborted) end(messages[error instanceof SignInError ? error.kind : "network"]);
     } finally { if (id === generation) pendingLogin = null; }
@@ -74,10 +93,11 @@ export function createAuthSession({ transport, now = Date.now, timers = {
   return {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    signIn, signOut: () => end("You have signed out."), checkExpiry,
+    signIn, signOut: () => end("You have signed out."), checkExpiry, setDataMode,
     async readIndicator(path: string, signal: AbortSignal): Promise<unknown> {
       checkExpiry();
       if (snapshot.phase !== "signed-in") throw new DashboardReadError("unauthorized");
+      if (snapshot.dataMode !== "live") throw new DOMException("Live data is paused", "AbortError");
       const id = generation, combined = AbortSignal.any([signal, lifetime.signal]);
       try {
         const result = await readIndicatorResource(path, combined, token, transport);
@@ -91,7 +111,7 @@ export function createAuthSession({ transport, now = Date.now, timers = {
     },
     async refresh() {
       checkExpiry();
-      if (snapshot.phase !== "signed-in" || snapshot.refreshing) return;
+      if (snapshot.phase !== "signed-in" || snapshot.dataMode !== "live" || snapshot.refreshing) return;
       publish({ ...snapshot, dashboard: beginRefresh(snapshot.dashboard.snapshot), refreshing: true });
       await polling?.refresh().catch(() => {});
     },

@@ -11,6 +11,12 @@ dashboard that polls every 60 seconds. Available real series render with their
 source/date metadata; eight source/definition gates remain blocked, including
 market permissions. Unavailable values remain explicit.
 
+After sign-in, the ticker's **Seed / Live** switch defaults to **Live**. **Seed**
+shows a labelled, illustrative dashboard with sample values for all cards and
+quotes; API polling and live history reads pause. Switching back clears samples
+and requests live data afresh. Sample values never enter SQLite or fill live gaps.
+Expiry and sign-out apply in both modes; the next session starts in Live mode.
+
 Local auth, API, database and browser checks pass. M6 owns the remaining full
 integration, controls, accessibility and design-fidelity acceptance. M7 owns
 separate HTTPS deployments, hosted evaluator access and production verification;

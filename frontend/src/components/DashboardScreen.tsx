@@ -3,7 +3,7 @@ import { indicatorPanelComponents } from "./panels/IndicatorPanels";
 import { dashboardPanels } from "../dashboard-panels";
 import { unavailableTicker } from "../ui/ticker-model";
 import type { DashboardView } from "../data/dashboard-state";
-import { useEffect, useState, useSyncExternalStore, type ComponentType } from "react";
+import { useEffect, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createPanelExplorer, type IndicatorRead } from "../data/panel-explorer";
 import type { PanelProps } from "./panels/IndicatorPanels";
 
@@ -18,10 +18,10 @@ function InteractivePanel({ Panel, panelId, read, refreshSequence, ...props }: P
   return <Panel {...props} data={data} explorer={{ controller: explorer, snapshot: selection }} />;
 }
 
-export default function DashboardScreen({ view, preview = false, readIndicator, refreshSequence = 0 }: { view: DashboardView; preview?: boolean; readIndicator?: IndicatorRead; refreshSequence?: number }) {
+export default function DashboardScreen({ view, preview = false, readIndicator, refreshSequence = 0, modeControl }: { view: DashboardView; preview?: boolean; readIndicator?: IndicatorRead; refreshSequence?: number; modeControl?: ReactNode }) {
   const state = view.phase === "ready" ? "unavailable" : view.phase;
   return <DashboardLayout apiState={view.phase} announcement={view.message} preview={preview}
-    ticker={view.snapshot?.ticker ?? { ...unavailableTicker, state }}>
+    ticker={view.snapshot?.ticker ?? { ...unavailableTicker, state }} modeControl={modeControl}>
     {indicatorPanelComponents.map((Panel, index) => {
       const id = dashboardPanels[index].id, props: PanelProps = { data: view.snapshot?.panels[id], state };
       return readIndicator ? <InteractivePanel key={id} Panel={Panel} panelId={id} read={readIndicator} refreshSequence={refreshSequence} {...props} /> : <Panel key={id} {...props} />;

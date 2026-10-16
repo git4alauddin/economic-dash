@@ -1,10 +1,10 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { decimalSign, formatDecimal, MISSING } from "../ui/format";
 import { quoteIsVisible, tickerStatus, unavailableTicker, type TickerPresentation } from "../ui/ticker-model";
 import ComparisonChange from "./ui/ComparisonChange";
 import SourceAsOf from "./ui/SourceAsOf";
 
-export default function MarketTicker({ model = unavailableTicker }: { model?: TickerPresentation }) {
+export default function MarketTicker({ model = unavailableTicker, modeControl }: { model?: TickerPresentation; modeControl?: ReactNode }) {
   const id = useId();
   const region = useRef<HTMLElement>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -26,7 +26,8 @@ export default function MarketTicker({ model = unavailableTicker }: { model?: Ti
       if (event.key === "Escape" && active) { event.preventDefault(); trigger()?.focus(); setSelected(null); }
     }}
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSelected(null); }}>
-    <span className="market-status" data-status={status}><span aria-hidden="true" />{status}</span>
+    {modeControl ?? <span className="market-status" data-status={status}><span aria-hidden="true" />{status}</span>}
+    {modeControl && <span className="sr-only">Market feed status: {status}</span>}
     <span id={`${id}-help`} className="sr-only">Market quotes. Scroll horizontally or use Left, Right, Home and End in this region. Activate an instrument for source, observation date and update schedule.</span>
     <div className="ticker-scroll" tabIndex={0} role="region" aria-label="Market quotes" aria-describedby={`${id}-help`}
       onKeyDown={(event) => {

@@ -36,6 +36,8 @@ try {
   const poller = await server.ssrLoadModule("/src/data/dashboard-poller.ts");
   const { apiBaseUrl } = await server.ssrLoadModule("/src/config.ts");
   const { dashboardFixture, responseFixture } = await server.ssrLoadModule("/src/preview/dashboard-fixtures.ts");
+  const { createSeedDashboard } = await server.ssrLoadModule("/src/data/seed-dashboard.ts");
+  const DataModeSwitch = await component("DataModeSwitch");
   const render = (type, props) => renderToStaticMarkup(createElement(type, props));
 
   await test("decimal display preserves values above Number's safe integer range", () => {
@@ -108,6 +110,40 @@ try {
     assert.match(render(SummaryValue, { label: "Zero", value: "0", unit: "percent", precision: 2 }), /0.00%/);
     for (const state of ["loading", "fresh", "empty", "error", "stale", "unavailable"]) assert.ok(render(StateMessage, { state }).includes(`data-state="${state}"`));
     assert.ok(render(StateMessage, { state: "stale", detail: "Original observation retained" }).includes("Original observation retained"));
+  });
+  await test("Seed presentation fills all six charts, twelve summaries and three quotes with explicit sample labels", () => {
+    const seed = createSeedDashboard(), snapshot = seed.snapshot;
+    assert.match(seed.message, /Seed data.*illustrative.*Not live/);
+    assert.deepEqual(snapshot.observations, {});
+    assert.equal(Object.keys(snapshot.panels).length, 6);
+    let summaries = 0;
+    for (const panel of Object.values(snapshot.panels)) {
+      assert.equal(panel.partial, false); assert.match(panel.detail, /not live/);
+      assert.equal(panel.asOf, null); assert.ok(panel.sources.every(source => source.url === ""));
+      summaries += panel.summaries.filter(item => item.value !== null).length;
+      assert.equal(panel.chart.labels.length, 5);
+      assert.ok(panel.chart.series.every(series => series.values.length === 5 && series.values.every(value => value !== null)));
+      for (const series of panel.chart.series) for (const value of series.values) {
+        assert.ok(Number(value) >= panel.chart.domain[0] && Number(value) <= panel.chart.domain[1]);
+      }
+    }
+    assert.equal(summaries, 12); assert.equal(snapshot.ticker.items.length, 3);
+    const gst = snapshot.panels.gst_collection;
+    assert.equal(gst.chart.unit, "inr_crore"); assert.equal(Number(gst.summaries[0].value) / 12, Number(gst.summaries[1].value));
+    assert.match(render(panels.GstPanel, { data: gst }), /Seed sample/);
+    assert.ok(!render(panels.GstPanel, { data: gst }).includes("Data unavailable"));
+    const changed = createSeedDashboard(); changed.snapshot.panels.gdp_growth.summaries[0].value = "0";
+    assert.equal(createSeedDashboard().snapshot.panels.gdp_growth.summaries[0].value, "7.1");
+  });
+  await test("data mode switch replaces the ticker badge and exposes labelled native radio choices", () => {
+    const control = createElement(DataModeSwitch, { mode: "live", onChange() {} });
+    const html = render(MarketTicker, { modeControl: control });
+    assert.match(html, /Dashboard data mode/);
+    assert.equal((html.match(/type="radio"/g) ?? []).length, 2);
+    assert.match(html, /aria-label="Live data"[^>]*checked/);
+    assert.match(html, /aria-label="Seed data"/);
+    assert.ok(!html.includes('class="market-status"'));
+    assert.match(html, /Market feed status: NO DATA/);
   });
   await test("chart conversion rejects non-finite/underflow values without hiding zero", () => {
     assert.equal(format.toChartNumber("0"), 0);

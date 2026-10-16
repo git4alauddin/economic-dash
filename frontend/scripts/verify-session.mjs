@@ -368,6 +368,42 @@ try {
   }
   await verifyPanelInteractions(dashboardBodies[0].data.panels);
   captureUpdates = true;
+  // The public Seed view must stay visibly labelled and isolated from API state.
+  await evaluate(`document.querySelector('input[aria-label="Live data"]').focus();true`);
+  await command("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 });
+  await command("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 });
+  await visible(`!!document.querySelector('[data-data-mode="seed"]')`, "keyboard selects Seed");
+  const seedRequestCount = requests.length;
+  const seedModeViews = [];
+  for (const viewport of [{width:1214,height:2159},{width:390,height:844},{width:320,height:740}]) {
+    await command("Emulation.setDeviceMetricsOverride", { ...viewport, deviceScaleFactor: 1, mobile: false });
+    await evaluate("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
+    const seed = await evaluate(`(() => {
+      const clipped = Array.from(document.querySelectorAll('.summary-number,.summary-label,.panel-heading h2')).filter(node=>node.scrollWidth>node.clientWidth+1).length;
+      return {banner:document.querySelector('.seed-notice')?.textContent.includes('Not live observations'),
+        charts:document.querySelectorAll('.chart-frame svg').length,
+        values:Array.from(document.querySelectorAll('.summary-number')).filter(node=>node.textContent.trim()!=='—').length,
+        quotes:document.querySelectorAll('.ticker-value').length,
+        refreshDisabled:document.querySelector('.session-toolbar button').disabled,
+        liveControls:document.querySelectorAll('.panel-history-controls').length,
+        overflow:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)>innerWidth,
+        focused:document.activeElement.getAttribute('aria-label')==='Seed data',clipped};})()`);
+    assert.equal(seed.banner, true); assert.equal(seed.charts, 6); assert.equal(seed.values, 12); assert.equal(seed.quotes, 3);
+    assert.equal(seed.refreshDisabled, true); assert.equal(seed.liveControls, 0); assert.equal(seed.overflow, false);
+    assert.equal(seed.focused, true, "Switch focus was lost during mode changes"); assert.equal(seed.clipped, 0, "Seed labels/values clipped");
+    seedModeViews.push({ ...viewport, ...seed });
+  }
+  await delay(150);
+  assert.equal(requests.length, seedRequestCount, "Seed mode fetched API data");
+  const beforeLive = dashboardBodies.length;
+  await command("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+  await command("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+  await dashboard(); await visible(`!!document.querySelector('[data-data-mode="live"]')&&!document.querySelector('.seed-notice')`, "Live clears sample banner");
+  await waitFor(() => dashboardBodies.length > beforeLive, "fresh Live representation after Seed");
+  assert.equal(requests.at(-1).conditional, false, "Live reused a pre-Seed validator");
+  assert.equal(await evaluate(`document.querySelector('[data-panel-id="debt_to_gdp"] .summary-number').textContent`), "—", "Seed filled an unavailable Live card");
+  await command("Emulation.setDeviceMetricsOverride", { width:1214,height:2159,deviceScaleFactor:1,mobile:false });
+  await assertWorldTrace(dashboardBodies.at(-1).data.panels.gdp_growth.series.gdp_growth_world.latest.status);
   const scheduledVersions = new Set();
   for (const action of ["source_timeout", "source_invalid", "source_recover"]) {
     const reply = await control(action), count = dashboardBodies.length;
@@ -523,13 +559,14 @@ try {
   const audit = await control("audit_public", { directory: site, console: consoleMessages });
   assert.ok(audit.assets_checked > 0);
   await command("Browser.close");
-  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: config.visual ? 14 : 13, panels: 6, web_storage_disabled: true,
+  process.stdout.write(JSON.stringify({ result: "PASS", scenarios: config.visual ? 15 : 14, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
     network_boundary_verified: true, world_source_sql_api_ui_verified: true,
     world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true,
     scheduled_source_sql_api_ui_verified: true, selected_history_failure_recovery_verified: true, api_503_recovery_verified: true,
     browser_token_cases_verified: true, server_token_rejection_clears_ui: true, cors_origins_verified: true,
-    public_assets_console_audited: true, ...(visualAudit ? { visualAudit } : {}), ...(visualImage ? { visualImage } : {}),
+    public_assets_console_audited: true, seed_live_isolation_verified: true, seedModeViews,
+    ...(visualAudit ? { visualAudit } : {}), ...(visualImage ? { visualImage } : {}),
     ...(reliabilityAudit ? { reliabilityAudit } : {}) }) + "\n");
 } finally {
   input.close();

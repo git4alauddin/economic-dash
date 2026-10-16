@@ -104,6 +104,86 @@ try {
       await time.advance(60000); assert.equal(requests.length, 3);
     } finally { session.dispose(); }
   });
+  await test("Seed mode pauses all reads; returning to Live clears samples and starts an unconditional read", async () => {
+    const { session, time, requests } = sessionSetup();
+    try {
+      await session.signIn("evaluator", password); await settle();
+      assert.equal(session.getSnapshot().dataMode, "live");
+      const before = requests.length;
+      session.setDataMode("seed");
+      const seed = session.getSnapshot();
+      assert.equal(seed.dataMode, "seed"); assert.equal(seed.dashboard.snapshot.version, "seed_demo_v1");
+      assert.match(seed.dashboard.message, /illustrative.*Not live/);
+      assert.equal(Object.keys(seed.dashboard.snapshot.panels).length, 6);
+      assert.equal(Object.values(seed.dashboard.snapshot.panels).flatMap(panel => panel.summaries).filter(item => item.value !== null).length, 12);
+      assert.equal(seed.dashboard.snapshot.ticker.items.length, 3);
+      assert.deepEqual(seed.dashboard.snapshot.observations, {});
+      assert.equal(time.pending.size, 1, "Only token expiry should remain scheduled in Seed mode");
+      await session.refresh();
+      await assert.rejects(session.readIndicator("/indicators", new AbortController().signal), { name: "AbortError" });
+      await time.advance(60001);
+      assert.equal(requests.length, before, "Seed mode fetched API data");
+      session.setDataMode("live");
+      assert.equal(session.getSnapshot().dashboard.snapshot, null, "Seed values leaked into Live loading");
+      await settle();
+      assert.equal(session.getSnapshot().dashboard.snapshot.version, "synthetic_snapshot_1");
+      assert.equal(requests.length, before + 1);
+      assert.equal(requests.at(-1).options.headers["If-None-Match"], undefined);
+      assert.equal(time.pending.size, 2);
+      assert.ok(!JSON.stringify(session.getSnapshot()).includes(token));
+    } finally { session.dispose(); }
+  });
+  await test("switching to Seed cancels pending dashboard and panel reads and rejects late responses", async () => {
+    let release, captured;
+    const { session } = sessionSetup((_url, options) => { captured = options.signal; return new Promise(resolve => { release = resolve; }); });
+    try {
+      await session.signIn("evaluator", password);
+      session.setDataMode("seed");
+      assert.equal(captured.aborted, true);
+      release(json({ error: { code: "authentication_invalid" } }, 401)); await settle();
+      assert.equal(session.getSnapshot().phase, "signed-in");
+      assert.equal(session.getSnapshot().dashboard.snapshot.version, "seed_demo_v1");
+    } finally { session.dispose(); }
+    const setup = sessionSetup((url, options) => url.endsWith("/dashboard") ? json(dashboardFixture()) :
+      new Promise(resolve => { captured = options.signal; release = resolve; }));
+    try {
+      await setup.session.signIn("evaluator", password); await settle();
+      const pending = setup.session.readIndicator("/indicators/trade", new AbortController().signal);
+      setup.session.setDataMode("seed"); assert.equal(captured.aborted, true);
+      release(json({ data: {} }));
+      await assert.rejects(pending, { name: "AbortError" });
+      assert.equal(setup.session.getSnapshot().dashboard.snapshot.version, "seed_demo_v1");
+    } finally { setup.session.dispose(); }
+  });
+  await test("Seed still expires, clears on logout, and always starts the next session in Live mode", async () => {
+    const { session, time } = sessionSetup();
+    try {
+      await session.signIn("evaluator", password); await settle(); session.setDataMode("seed");
+      await time.advance(900001);
+      assert.equal(session.getSnapshot().phase, "signed-out");
+      assert.equal(session.getSnapshot().dataMode, "live");
+      assert.equal(session.getSnapshot().dashboard.snapshot, null);
+      session.setDataMode("seed"); assert.equal(session.getSnapshot().dashboard.snapshot, null);
+      await session.signIn("evaluator", password); await settle();
+      assert.equal(session.getSnapshot().dataMode, "live");
+      session.setDataMode("seed"); session.signOut();
+      assert.equal(session.getSnapshot().dataMode, "live"); assert.equal(time.pending.size, 0);
+    } finally { session.dispose(); }
+  });
+  await test("repeated mode changes coalesce selections and release previous polling timers", async () => {
+    const { session, time, requests } = sessionSetup();
+    try {
+      await session.signIn("evaluator", password); await settle();
+      for (let cycle = 0; cycle < 30; cycle++) {
+        const before = requests.length;
+        session.setDataMode("seed"); session.setDataMode("seed");
+        assert.equal(time.pending.size, 1); assert.equal(requests.length, before);
+        session.setDataMode("live"); session.setDataMode("live"); await settle();
+        assert.equal(requests.length, before + 1); assert.equal(time.pending.size, 2);
+      }
+    } finally { session.dispose(); }
+    assert.equal(time.pending.size, 0);
+  });
   await test("401 and 403 during polling clear the session and stop all timers", async () => {
     for (const status of [401, 403]) {
       let failing = false;
