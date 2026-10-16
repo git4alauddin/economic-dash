@@ -5,6 +5,7 @@ export interface SummaryDatum {
   label: string; value: DecimalValue; unit: Unit; precision: number;
   comparison?: { value: DecimalValue; unit: Unit; precision: number; referenceLabel: string };
   state?: UiState;
+  detail?: string;
 }
 export interface PlotSeries {
   id: string; label: string; values: readonly DecimalValue[]; color: string;

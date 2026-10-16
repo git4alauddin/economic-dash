@@ -6,11 +6,12 @@ import SummaryValue from "../ui/SummaryValue";
 import ComparisonChange from "../ui/ComparisonChange";
 import PeriodLabel from "../ui/PeriodLabel";
 import PanelMetadata from "./PanelMetadata";
+import type { PanelExplorer, ExplorerSnapshot } from "../../data/panel-explorer";
 import Legend from "../charts/Legend";
 import PanelIcon, { type PanelIconKind } from "./PanelIcon";
 import PanelPlot, { type PanelKind } from "./PanelPlots";
 
-interface PanelProps { data?: PanelPresentation; state?: UiState; }
+export interface PanelProps { data?: PanelPresentation; state?: UiState; explorer?: { controller: PanelExplorer; snapshot: ExplorerSnapshot }; }
 interface Recipe { index: number; kind: PanelKind; labels: readonly [string, string]; units: readonly [Unit, Unit]; icons: readonly [PanelIconKind, PanelIconKind]; }
 const recipes: Record<PanelKind, Recipe> = {
   gdp: { index: 0, kind: "gdp", labels: ["India", "World"], units: ["percent_yoy", "percent_yoy"], icons: ["india", "world"] },
@@ -21,7 +22,7 @@ const recipes: Record<PanelKind, Recipe> = {
   expenditure: { index: 5, kind: "expenditure", labels: ["Total Expenditure", "Capital Expenditure"], units: ["inr_crore", "inr_crore"], icons: ["total", "capital"] },
 };
 
-function PanelContent({ recipe, data, state = "unavailable" }: PanelProps & { recipe: Recipe }) {
+function PanelContent({ recipe, data, state = "unavailable", explorer }: PanelProps & { recipe: Recipe }) {
   const summaries: readonly SummaryDatum[] = data?.summaries ?? recipe.labels.map((label, index) => ({ label, value: null, unit: recipe.units[index], precision: 2 }));
   const chart = data?.chart ?? null;
   const status = data?.state ?? state;
@@ -35,13 +36,14 @@ function PanelContent({ recipe, data, state = "unavailable" }: PanelProps & { re
           const state = summary.state ?? status, available = state === "fresh" || state === "stale";
           return <SummaryValue key={index} {...summary} value={available ? summary.value : null} icon={<PanelIcon kind={recipe.icons[index]} />} iconPlacement={recipe.index < 2 ? "inline" : "corner"}>
             {available && summary.comparison && <ComparisonChange {...summary.comparison} />}
-            {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
+            {summary.state && state !== "fresh" && <span className={`summary-state state-${state}`}>{state === "loading" ? "Loading…" : state === "stale" ? "Stale observation" : state === "empty" ? "No observations" : state === "error" ? "Unable to load" : "Unavailable"}</span>}
+            {summary.detail && <span>{summary.detail}</span>}
           </SummaryValue>;
         })}
       </div>
       <div className="panel-chart-caption"><PeriodLabel label={data?.period.label ?? null} basis={data?.period.basis} /><Legend items={legend.map((series) => ({ id: series.id, label: series.label, color: series.color, kind: series.kind === "bar" ? "bar" : "line" }))} /></div>
       <div className="panel-plot-region"><PanelPlot kind={recipe.kind} chart={chart} state={data?.chartState ?? status} /></div>
-      <PanelMetadata data={data} />
+      <PanelMetadata data={data} explorer={explorer} />
     </div>
   </PanelShell>;
 }

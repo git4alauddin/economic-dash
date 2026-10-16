@@ -1,6 +1,6 @@
 import { signInCredentials, SignInError, type SessionUser } from "./auth-client";
 import { startDashboardPolling } from "../data/dashboard-poller";
-import type { DashboardTransport } from "../data/dashboard-client";
+import { DashboardReadError, readIndicatorResource, type DashboardTransport } from "../data/dashboard-client";
 import { beginRefresh, initialDashboardView, type DashboardView } from "../data/dashboard-state";
 
 export interface SessionSnapshot {
@@ -26,10 +26,12 @@ export function createAuthSession({ transport, now = Date.now, timers = {
   const listeners = new Set<() => void>();
   let generation = 0, expiresAt = 0, expiryTimer: unknown = null;
   let pendingLogin: AbortController | null = null;
+  let token = "", lifetime = new AbortController();
   let polling: ReturnType<typeof startDashboardPolling> | null = null;
   function publish(value: SessionSnapshot) { snapshot = value; listeners.forEach((listener) => listener()); }
   function end(message: string) {
     generation++; pendingLogin?.abort(); pendingLogin = null;
+    token = ""; lifetime.abort(); lifetime = new AbortController();
     polling?.stop(); polling = null; expiresAt = 0;
     if (expiryTimer !== null) timers.cancel(expiryTimer);
     expiryTimer = null;
@@ -56,6 +58,7 @@ export function createAuthSession({ transport, now = Date.now, timers = {
       const grant = await signInCredentials(username, password, controller.signal, { transport, now });
       if (id !== generation || controller.signal.aborted) return;
       expiresAt = Math.min(grant.expiresAt, now() + grant.lifetimeMs);
+      token = grant.token;
       publish({ phase: "signed-in", user: grant.user, message: "", dashboard: initialDashboardView, refreshing: true });
       expireWhenDue(id);
       polling = startDashboardPolling(grant.token, (dashboard) => {
@@ -71,6 +74,20 @@ export function createAuthSession({ transport, now = Date.now, timers = {
     getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     signIn, signOut: () => end("You have signed out."), checkExpiry,
+    async readIndicator(path: string, signal: AbortSignal): Promise<unknown> {
+      checkExpiry();
+      if (snapshot.phase !== "signed-in") throw new DashboardReadError("unauthorized");
+      const id = generation, combined = AbortSignal.any([signal, lifetime.signal]);
+      try {
+        const result = await readIndicatorResource(path, combined, token, transport);
+        combined.throwIfAborted(); checkExpiry();
+        if (id !== generation) throw new DOMException("Session ended", "AbortError");
+        return result;
+      } catch (error) {
+        if (id === generation && !combined.aborted && error instanceof DashboardReadError && error.kind === "unauthorized") end("Your session ended. Please sign in again.");
+        throw error;
+      }
+    },
     async refresh() {
       checkExpiry();
       if (snapshot.phase !== "signed-in" || snapshot.refreshing) return;

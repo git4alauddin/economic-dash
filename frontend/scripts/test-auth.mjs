@@ -169,4 +169,32 @@ try {
     const reloaded = createAuthSession();
     assert.equal(reloaded.getSnapshot().phase, "signed-out"); reloaded.dispose();
   });
+  await test("period/history reads share bearer limits, reject foreign paths and abort on logout", async () => {
+    let finish, signal;
+    const { session, requests } = sessionSetup((url, options) => {
+      if (!url.includes("/indicators")) return json(dashboardFixture());
+      signal = options.signal; return new Promise((resolve) => { finish = resolve; });
+    });
+    await assert.rejects(session.readIndicator("/indicators?window=24", new AbortController().signal));
+    assert.equal(requests.length, 0);
+    await session.signIn("evaluator", password); await settle();
+    await assert.rejects(session.readIndicator("https://example.invalid/indicators", new AbortController().signal));
+    assert.equal(requests.length, 2);
+    const pending = session.readIndicator("/indicators/gdp_growth?window=10&period=gdp_growth_world%3ACY2024", new AbortController().signal);
+    const request = requests.at(-1);
+    assert.equal(request.options.headers.Authorization, `Bearer ${token}`);
+    assert.equal(request.options.credentials, "omit"); assert.equal(request.options.redirect, "error");
+    assert.equal(request.url.includes(token), false); assert.equal(JSON.stringify(session.getSnapshot()).includes(token), false);
+    session.signOut(); assert.equal(signal.aborted, true);
+    finish(json(dashboardFixture())); await assert.rejects(pending);
+    assert.equal(session.getSnapshot().dashboard.snapshot, null); session.dispose();
+  });
+  await test("401/403 from lazy catalog or historical selection clear the whole session", async () => {
+    for (const status of [401, 403]) {
+      const { session, time } = sessionSetup((url) => url.includes("/indicators") ? json({}, status) : json(dashboardFixture()));
+      await session.signIn("evaluator", password); await settle();
+      await assert.rejects(session.readIndicator("/indicators?window=24", new AbortController().signal));
+      assert.equal(session.getSnapshot().phase, "signed-out"); assert.equal(time.pending.size, 0); session.dispose();
+    }
+  });
 } finally { await server.close(); }

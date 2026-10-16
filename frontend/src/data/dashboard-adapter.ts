@@ -22,6 +22,7 @@ function sharedDate(observations: readonly Observation[]): AsOfDate | null {
   return dates.length && dates.every((date) => JSON.stringify(date) === JSON.stringify(dates[0])) ? dates[0] : null;
 }
 export function stateDetail(state: UiState, reason: string | null): string {
+  if (reason === "comparison_definition_unresolved") return "India–US comparison definition and aligned periods are unresolved.";
   if (reason === "refresh_failed") return "Refresh failed; permitted observations retained and marked stale.";
   if (reason === "invalid_response") return "Response validation failed; no unvalidated values are shown.";
   if (state === "stale") return "Retained observation; check its original date and source.";
@@ -69,7 +70,8 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
   const state = aggregate([...latest.map((point) => point.status), chartState]);
   const summaries = binding.summaries.map((id) => {
     const item = id ? entries[id] : undefined, definition = binding.series.find((entry) => entry.id === id);
-    return { label: item?.name ?? definition?.label ?? "Comparison unavailable", value: item?.latest.value ?? null,
+    return { label: item?.name ?? definition?.label ?? (panelId === "debt_to_gdp" ? "Ind vs US" : "Comparison unavailable"), value: item?.latest.value ?? null,
+      detail: !id && panelId === "debt_to_gdp" ? "Comparison definition unresolved." : undefined,
       unit: definition?.unit ?? binding.series[0].unit, precision: item?.precision ?? 2, state: item?.latest.status ?? "unavailable" as UiState,
       comparison: item?.comparison && item.latest.value !== null ? { value: item.comparison.value, unit: item.comparison.unit, precision: item.comparison.precision, referenceLabel: item.comparison.reference_label } : undefined };
   });
@@ -77,7 +79,7 @@ export function adaptPanel(panelId: string, raw: unknown, entries: Readonly<Reco
   const allPoints = [...latest, ...items.flatMap((item) => item.history.points)];
   return { state, chartState, summaries, chart, period: { label: typeof input.period_label === "string" ? input.period_label.slice(0, 240) : null },
     sources: mergeSources(allPoints), asOf: sharedDate(latest),
-    detail: partial && displayable(state) ? "Partial data · inspect series details" : stateDetail(state, latest.find((point) => point.reason_code)?.reason_code ?? null),
+    detail: (partial && displayable(state) ? "Partial data · inspect series details" : stateDetail(state, latest.find((point) => point.reason_code)?.reason_code ?? null)) + (panelId === "debt_to_gdp" ? ` ${stateDetail("unavailable", "comparison_definition_unresolved")}` : ""),
     seriesDetails: binding.series.map((definition) => {
       const item = entries[definition.id];
       return { id: definition.id, label: item?.name ?? definition.label, state: item?.latest.status ?? "unavailable",

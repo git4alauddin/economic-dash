@@ -40,14 +40,14 @@ async function boundedDashboardJson(response: Response, signal: AbortSignal): Pr
     reader.releaseLock();
   }
 }
-async function fetchDashboard(signal: AbortSignal, token: string, transport: DashboardTransport, etag: string | null = null): Promise<ReadResult> {
+async function fetchDashboard(signal: AbortSignal, token: string, transport: DashboardTransport, etag: string | null = null, path = "/dashboard"): Promise<ReadResult> {
   signal.throwIfAborted();
   if (!token.trim()) throw new DashboardReadError("unauthorized");
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
   try {
     const headers: Record<string, string> = { Accept: "application/json", Authorization: `Bearer ${token}` };
     if (etag) headers["If-None-Match"] = etag;
-    const response = await transport(`${apiBaseUrl}/api/v1/dashboard`, { method: "GET", headers, credentials: "omit", cache: "no-store", redirect: "error", signal: requestSignal });
+    const response = await transport(`${apiBaseUrl}/api/v1${path}`, { method: "GET", headers, credentials: "omit", cache: "no-store", redirect: "error", signal: requestSignal });
     requestSignal.throwIfAborted();
     if (response.status === 401 || response.status === 403) throw new DashboardReadError("unauthorized");
     if (response.status === 304) return { unchanged: true, etag: validEtag(response.headers.get("ETag")) };
@@ -59,6 +59,13 @@ async function fetchDashboard(signal: AbortSignal, token: string, transport: Das
     signal.throwIfAborted();
     throw error instanceof DashboardReadError ? error : new DashboardReadError("network");
   }
+}
+// Same origin, bearer transport, byte limit and deadline as dashboard polling.
+export async function readIndicatorResource(path: string, signal: AbortSignal, token: string, transport: DashboardTransport = fetch): Promise<unknown> {
+  if (!/^\/indicators(?:\/[a-z_]+)?(?:\?[a-zA-Z0-9_%=&:+.-]*)?$/.test(path)) throw new DashboardReadError("invalid");
+  const result = await fetchDashboard(signal, token, transport, null, path);
+  if (result.unchanged) throw new DashboardReadError("invalid");
+  return result.body;
 }
 // Single reads remain available; conditional polling owns its cache explicitly below.
 export async function readDashboard(signal: AbortSignal, token: string, transport: DashboardTransport = fetch): Promise<unknown> {

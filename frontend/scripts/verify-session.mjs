@@ -7,7 +7,7 @@ import { join, resolve, relative, isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { build, preview } from "vite";
+import { build, preview, createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { privateDataBoundary } from "./private-data-boundary.mjs";
 
@@ -16,9 +16,10 @@ const config = JSON.parse((await lines.next()).value);
 const root = fileURLToPath(new URL("../", import.meta.url));
 const temporary = await mkdtemp(join(tmpdir(), "economic-dash-browser-"));
 const site = join(temporary, "site"), profile = join(temporary, "profile");
-let browser, socket, web;
+let browser, socket, web, validator;
 const pending = new Map(), requests = [], network = [], statuses = [], errors = [];
 const dashboardRequests = new Set(), dashboardBodies = [], captures = [];
+const indicatorRequests = new Map(), indicatorBodies = [];
 const runtimeErrors = new Map();
 async function waitFor(probe, description, timeout = 15000) {
   const deadline = Date.now() + timeout;
@@ -26,6 +27,9 @@ async function waitFor(probe, description, timeout = 15000) {
   throw new Error(`Timed out: ${description}`);
 }
 try {
+  validator = await createServer({ root, configFile: false, cacheDir: "node_modules/.cache/session-validator", server: { middlewareMode: true, hmr: false }, appType: "custom" });
+  const { formatValue } = await validator.ssrLoadModule("/src/ui/format.ts");
+  const { panelBindings } = await validator.ssrLoadModule("/src/data/dashboard-contract.ts");
   await build({ root, configFile: false, publicDir: false, plugins: [react(), privateDataBoundary(root)], logLevel: "error",
     define: { "import.meta.env.VITE_API_BASE_URL": JSON.stringify(config.api_url) }, build: { outDir: site, emptyOutDir: true } });
   web = await preview({ root, configFile: false, logLevel: "error", build: { outDir: site },
@@ -78,6 +82,15 @@ try {
         dashboardBodies.push(JSON.parse(result.base64Encoded ? Buffer.from(result.body, "base64").toString("utf8") : result.body));
       }).catch(() => { errors.push("Dashboard response capture failed"); }));
     }
+    if (item.method === "Network.responseReceived" && item.params.type === "Fetch" && item.params.response.status === 200 && item.params.response.url.startsWith(`${config.api_url}/api/v1/indicators`)) {
+      indicatorRequests.set(item.params.requestId, item.params.response.url);
+    }
+    if (item.method === "Network.loadingFinished" && indicatorRequests.has(item.params.requestId)) {
+      const url = indicatorRequests.get(item.params.requestId); indicatorRequests.delete(item.params.requestId);
+      captures.push(command("Network.getResponseBody", { requestId: item.params.requestId }).then((result) => {
+        indicatorBodies.push({ url, body: JSON.parse(result.base64Encoded ? Buffer.from(result.body, "base64").toString("utf8") : result.body) });
+      }).catch(() => { errors.push("Indicator response capture failed"); }));
+    }
     const callback = pending.get(item.id);
     if (callback) { clearTimeout(callback.timer); pending.delete(item.id); item.error ? callback.reject(Error(item.error.message)) : callback.accept(item.result); }
   });
@@ -124,7 +137,98 @@ try {
     assert.equal(dom.visible, true, "World source/date details are not visible");
     await evaluate(`document.querySelector('[data-panel-id="gdp_growth"] .panel-data-details').open=false`);
   };
+  const assertPanelBinding = async (id, raw) => {
+    const expected = panelBindings[id].summaries.map((sid) => {
+      const item = sid ? raw.series[sid] : null;
+      return item ? formatValue(["fresh", "stale"].includes(item.latest.status) ? item.latest.value : null, item.latest.unit, item.precision) : "—";
+    });
+    const actual = await evaluate(`Array.from(document.querySelector('[data-panel-id="${id}"]').querySelectorAll('.summary-number')).map(node=>node.textContent)`);
+    assert.deepEqual(actual, expected, `${id} summary binding mismatch`);
+    for (const [sid, series] of Object.entries(raw.series)) {
+      const dom = await evaluate(`(() => {
+        const section=document.querySelector('[data-panel-id="${id}"] [data-series-id="${sid}"]');
+        return {rows:Array.from(section.querySelectorAll('tbody tr')).map(row=>[row.querySelector('th').textContent,row.querySelector('td').textContent]),
+          links:Array.from(section.querySelectorAll('a')).map(a=>({name:a.textContent,url:a.href})),state:section.dataset.seriesState};
+      })()`);
+      assert.deepEqual(dom.rows, series.history.points.map((point) => [point.observation_period.label, formatValue(point.value, point.unit, series.precision)]), `${id}/${sid} history binding mismatch`);
+      const sources = [...new Map([series.latest, ...series.history.points].flatMap((point) => point.sources).map((source) => [source.source_id, source])).values()];
+      assert.deepEqual(dom.links, sources.map(({ name, url }) => ({ name, url })), `${id}/${sid} source mismatch`);
+      assert.equal(dom.state, series.latest.status);
+      if (series.comparison && series.latest.value !== null) {
+        const text = await evaluate(`document.querySelector('[data-panel-id="${id}"]').textContent`);
+        assert.ok(text.includes(series.comparison.reference_label), `${id} comparison reference lost`);
+      }
+    }
+  };
+  const verifyPanelInteractions = async (panels) => {
+    for (const [id, raw] of Object.entries(panels)) {
+      const selector = `[data-panel-id="${id}"]`;
+      await evaluate(`document.querySelector('${selector} .panel-data-details').open=true`);
+      await visible(`!!document.querySelector('${selector} select[data-period-series]')`, `${id} verified period choices`);
+      await assertPanelBinding(id, raw);
+      for (const sid of Object.keys(raw.series)) {
+        const disabled = await evaluate(`document.querySelector('${selector} [data-period-series="${sid}"]').disabled`);
+        const options = await evaluate(`Array.from(document.querySelector('${selector} [data-period-series="${sid}"]').options).slice(1).map(option=>option.value)`);
+        const catalog = indicatorBodies.find((entry) => new URL(entry.url).pathname === "/api/v1/indicators")?.body;
+        assert.ok(catalog, "Catalog response not captured");
+        const choice = catalog.data.find((panel) => panel.indicator_id === id).series.find((item) => item.series_id === sid);
+        assert.deepEqual(options, choice.available_periods.map((period) => period.id));
+        assert.equal(disabled, choice.status === "blocked" || !choice.available_periods.length);
+      }
+      const before = indicatorBodies.length;
+      await evaluate(`(() => {const select=document.querySelector('${selector} select[aria-label="History window"]');select.value='10';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+      await visible(`document.querySelector('${selector} [role="status"]')?.textContent.startsWith('Selected history.')`, `${id} history window`);
+      await waitFor(() => indicatorBodies.slice(before).some((entry) => new URL(entry.url).pathname === `/api/v1/indicators/${id}`), `${id} panel response`);
+      let selected = indicatorBodies.slice(before).findLast((entry) => new URL(entry.url).pathname === `/api/v1/indicators/${id}`);
+      assert.equal(new URL(selected.url).searchParams.get("window"), "10");
+      await assertPanelBinding(id, selected.body.data);
+      const sid = Object.keys(raw.series).find((key) => selected.body.data.series[key].history.points.some((point) => point.value !== null));
+      if (sid) {
+        const period = await evaluate(`document.querySelector('${selector} [data-period-series="${sid}"]').options[1].value`);
+        const count = indicatorBodies.length;
+        await evaluate(`(() => {const select=document.querySelector('${selector} [data-period-series="${sid}"]');select.value=${JSON.stringify(period)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+        await visible(`document.querySelector('${selector} [role="status"]')?.textContent.startsWith('Selected history.')`, `${id} historical period`);
+        await waitFor(() => indicatorBodies.slice(count).some((entry) => new URL(entry.url).searchParams.getAll("period").includes(`${sid}:${period}`)), `${id} selected-period query`);
+        selected = indicatorBodies.slice(count).findLast((entry) => new URL(entry.url).pathname === `/api/v1/indicators/${id}`);
+        assert.equal(selected.body.data.series[sid].latest.observation_period.id, period);
+        await assertPanelBinding(id, selected.body.data);
+        await click("Refresh data"); await dashboard();
+        assert.equal(await evaluate(`document.querySelector('${selector} [data-period-series="${sid}"]').value`), period, "Latest poll overwrote historical selection");
+        await assertPanelBinding(id, selected.body.data);
+      }
+      await evaluate(`Array.from(document.querySelectorAll('${selector} button')).find(button=>button.textContent==='Latest view').click()`);
+      await assertPanelBinding(id, raw);
+      // Real plotted points retain keyboard inspection and Escape dismissal.
+      const points = await evaluate(`document.querySelectorAll('${selector} .chart-point').length`);
+      if (points) {
+        await evaluate(`document.querySelector('${selector} .chart-point').focus()`);
+        try { await visible(`!!document.querySelector('${selector} [role="tooltip"]')`, `${id} focused point tooltip`, 2000); }
+        catch {
+          const diagnostic = await evaluate(`(() => { const point=document.querySelector('${selector} .chart-point');return {active:document.activeElement?.tagName,activeClass:document.activeElement?.getAttribute('class'),focused:document.activeElement===point,tabindex:point.getAttribute('tabindex'),pageFocus:document.hasFocus(),rect:point.getBoundingClientRect().toJSON(),figure:point.closest('figure').textContent.slice(-180)};})()`);
+          throw Error(`${id} chart focus failed: ${JSON.stringify(diagnostic)}`);
+        }
+        await command("Input.dispatchKeyEvent", { type: "keyDown", key: "End", code: "End" });
+        assert.equal(await evaluate(`document.activeElement===Array.from(document.querySelectorAll('${selector} .chart-point')).at(-1)`), true);
+        await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+        assert.equal(await evaluate(`!!document.querySelector('${selector} [role="tooltip"]')`), false);
+      }
+      await evaluate(`document.querySelector('${selector} .panel-data-details summary').focus()`);
+      await command("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+      assert.equal(await evaluate(`document.querySelector('${selector} .panel-data-details').open`), false);
+    }
+    assert.ok(await evaluate(`document.querySelector('[data-panel-id="debt_to_gdp"] .summary-value[aria-label="Ind vs US"]').textContent.includes('Comparison definition unresolved.')`));
+    for (const quote of dashboardBodies[0].data.ticker.items) {
+      await evaluate(`document.querySelector('[data-instrument-id="${quote.instrument_id}"]').click()`);
+      assert.ok(await evaluate(`!!document.querySelector('.ticker-details')`));
+      assert.ok(await evaluate(`document.querySelector('.ticker-details').textContent.includes('Quote unavailable')`));
+      await click("Close");
+      assert.equal(await evaluate(`document.activeElement.getAttribute('data-instrument-id')`), quote.instrument_id);
+    }
+  };
   await command("Page.enable"); await command("Runtime.enable"); await command("Network.enable");
+  // Headless pages can have an active SVG element while the page itself is
+  // unfocused, suppressing native focus events. Emulate the foreground tab.
+  await command("Emulation.setFocusEmulationEnabled", { enabled: true });
   await command("Emulation.setDeviceMetricsOverride", { width: 1214, height: 2159, deviceScaleFactor: 1, mobile: false });
   await command("Page.addScriptToEvaluateOnNewDocument", { source: `
     for(const name of ['localStorage','sessionStorage']) Object.defineProperty(window,name,{get(){throw Error('Storage disabled for session check')}});
@@ -149,6 +253,7 @@ try {
   assert.equal(world.as_of, config.world_trace.year);
   assert.equal(world.as_of_precision, "year");
   await assertWorldTrace(world.status);
+  await verifyPanelInteractions(dashboardBodies[0].data.panels);
   assert.equal(await evaluate(`document.querySelector('.indicator-grid').children.length`), 6);
   assert.ok(await evaluate(`document.querySelectorAll('a[href^="https://"]').length>0`), "Real publisher attribution was lost");
   assert.equal((await command("Network.getCookies")).cookies.length, 0);
@@ -200,7 +305,7 @@ try {
   process.stdout.write(JSON.stringify({ result: "PASS", scenarios: 10, panels: 6, web_storage_disabled: true,
     cookies_disabled: true, real_revocation_verified: true, expiry_verified: true, no_runtime_errors: true,
     network_boundary_verified: true, world_source_sql_api_ui_verified: true,
-    world_failure_recovery_verified: true, direct_unauthorized_rejected: true }) + "\n");
+    world_failure_recovery_verified: true, direct_unauthorized_rejected: true, full_dashboard_interactions_verified: true }) + "\n");
 } finally {
   input.close();
   for (const callback of pending.values()) clearTimeout(callback.timer);
@@ -209,6 +314,7 @@ try {
     await new Promise((accept) => { const timer = setTimeout(() => { browser.kill(); accept(); }, 3000); browser.once("exit", () => { clearTimeout(timer); accept(); }); });
   }
   if (web) await new Promise((accept) => web.httpServer.close(accept));
+  await validator?.close();
   const child = relative(resolve(tmpdir()), resolve(temporary));
   if (!child.startsWith("..") && !isAbsolute(child) && child.startsWith("economic-dash-browser-")) await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
